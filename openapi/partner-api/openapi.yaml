@@ -1,0 +1,875 @@
+openapi: "3.1.0"
+info:
+  title: SASHA Partner API
+  summary: Protect images with SASHA Signature
+  description: |
+    This API allows protecting new images and checking if an image is already protected with SASHA Signature.
+
+    ## Authenticate with Client Credentials
+
+    To authenticate with Client Credentials, you need to send a request to the
+    [`/oauth/token`](https://developer.sasha.eu/partner-api/api-reference/rest-api/get-token) endpoint.
+
+    The server will authenticate the Partner and return an Access Token that can be used for making
+    requests to the Signature endpoints.
+
+    ## Protect an image with SASHA Signature
+
+    To protect an image with SASHA Signature, you need to send a request to the
+    [/signature/embed](https://developer.sasha.eu/partner-api/api-reference/rest-api/embed-signature) endpoint, providing
+    the image file or the URL to the image file.
+
+    The server will return a Job object with the job ID and status. Once the job is complete,
+    the protected image file will be available at the `output_url` and the `signature_id` will be populated
+    representing the globally unique identifier of the protected image.
+
+    Partners may poll for the job status using the `/jobs/{job_id}` endpoint or provide a `callback_url` in
+    the request to receive notifications when the job is complete.
+
+    ## Check if an image is already protected with SASHA Signature
+
+    To check if an image is already protected with SASHA Signature, you need to send a request to the
+    [/signature/lookup](https://developer.sasha.eu/partner-api/api-reference/rest-api/lookup-signature) endpoint, providing
+    the image file or the URL to the image file.
+
+    The server will return a Job object with the job ID and status. Once the job is complete,
+    the Job object will contain the `signature_id` field if a SASHA Signature is found.
+
+    ## Job Status and Callbacks
+
+    All operations are asynchronous and return a Job object with a unique job_id. You can:
+
+    1. **Poll for status**: Use the `/jobs/{job_id}` endpoint to check job status.
+    2. **Callback notifications**: Provide a `callback_url` in your request to receive notifications when the job status changes.
+
+    ## Callback Notifications
+
+    If you provide a `callback_url` in your Embed Signature or Lookup Signature request, the system will send HTTP POST
+    requests to that URL whenever the job status changes. The callback payload will contain the
+    complete Job object with updated status information. Partners can use this callback to track the status of their
+    jobs and get notified when the job is complete to get the result.
+
+    Partners can validate the callback request to ensure it genuinely comes from SASHA and was not
+    modified in transit, see callback documentation below.
+  contact:
+    name: API Support
+    email: support@sasha.eu
+  version: "1.0.0"
+
+externalDocs:
+  description: SASHA Developer Portal
+  url: https://developer.sasha.eu
+
+servers:
+  - url: https://partner.api.sasha.eu
+    description: Partner API server
+
+tags:
+  - name: Authentication
+    description: Authenticate Partner and get an Access Token
+  - name: Embed
+    description: Embed a SASHA Signature into an image
+  - name: Lookup
+    description: Check if a SASHA Signature is present in an image
+  - name: Job
+    description: Job management
+
+paths:
+  /oauth/token:
+    post:
+      tags:
+        - Authentication
+      summary: Get Token
+      description: |
+        Authenticate Partner and get an Access Token.
+
+        The request should contain the Client ID and Client Secret passed as Basic Authentication credentials.
+      operationId: GetToken
+      security:
+        - BasicAuth: []
+      requestBody:
+        description: Get Token Request
+        required: true
+        content:
+          application/x-www-form-urlencoded:
+            schema:
+              $ref: "#/components/schemas/GetTokenRequest"
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GetTokenResponse"
+        "400":
+          description: Bad request
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthErrorResponse"
+        "401":
+          description: Unauthorized
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthErrorResponse"
+
+  /signature/embed:
+    post:
+      tags:
+        - Embed
+      summary: Embed Signature
+      description: Embed a SASHA Signature into the provided image file
+      operationId: EmbedSignature
+      externalDocs:
+        description: Embed Signature
+        url: https://developer.sasha.eu/partner-api/concepts/signature#embed-signature
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Embed Signature Request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EmbedSignatureFromURLRequest"
+            examples:
+              embedRequestFromURLWithCallback:
+                $ref: "#/components/examples/embedRequestFromURLWithCallback"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/EmbedSignatureFromDataRequest"
+      callbacks:
+        jobStatusChanged:
+          $ref: "#/components/callbacks/jobStatusChanged"
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/EmbedSignatureResponse"
+              examples:
+                embedJobPending:
+                  $ref: "#/components/examples/embedJobResponsePending"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /signature/lookup:
+    post:
+      tags:
+        - Lookup
+      summary: Lookup Signature
+      description: Check if the provided image contains SASHA Signature
+      operationId: LookupSignature
+      externalDocs:
+        description: Lookup Signature
+        url: https://developer.sasha.eu/partner-api/concepts/signature#lookup-signature
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: Lookup Signature Request
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LookupSignatureFromURLRequest"
+            examples:
+              lookupRequestFromURLWithCallback:
+                $ref: "#/components/examples/lookupRequestFromURLWithCallback"
+          multipart/form-data:
+            schema:
+              $ref: "#/components/schemas/LookupSignatureFromDataRequest"
+      callbacks:
+        jobStatusChanged:
+          $ref: "#/components/callbacks/jobStatusChanged"
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LookupSignatureResponse"
+              examples:
+                lookupJobPending:
+                  $ref: "#/components/examples/lookupJobResponsePending"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+  /jobs/{job_id}:
+    get:
+      tags:
+        - Job
+      summary: Get Job
+      description: Gets job information by its ID
+      operationId: GetJob
+      security:
+        - BearerAuth: []
+      parameters:
+        - name: job_id
+          in: path
+          required: true
+          schema:
+            type: string
+          description: The ID of the job to retrieve
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Job"
+              examples:
+                embedJobPending:
+                  $ref: "#/components/examples/embedJobPending"
+                lookupJobPending:
+                  $ref: "#/components/examples/lookupJobPending"
+                embedJobCompleted:
+                  $ref: "#/components/examples/embedJobCompleted"
+                lookupJobCompleted:
+                  $ref: "#/components/examples/lookupJobCompleted"
+                embedJobFailed:
+                  $ref: "#/components/examples/embedJobFailed"
+                lookupJobFailed:
+                  $ref: "#/components/examples/lookupJobFailed"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
+
+  /jobs:
+    get:
+      tags:
+        - Job
+      summary: List Jobs
+      description: Lists all jobs
+      operationId: ListJobs
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Successful operation
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListJobsResponse"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+
+components:
+  securitySchemes:
+    BasicAuth:
+      type: http
+      scheme: basic
+      description: |
+        Base64-encoded string that contains the Client ID and Client Secret.
+
+        The Client ID and Client Secret must each be form-url-encoded.
+
+        The field must have the format: `Authorization: Basic <base64-encoded client_id:client_secret>`
+    BearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+      description: Bearer token obtained from `GetToken` endpoint
+    CallbackBearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: string
+      description: Bearer token, see [Callback Notifications](#callback-notifications) for more details.
+
+  responses:
+    ErrorResponse:
+      description: An error has occurred.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    UnauthorizedResponse:
+      description: An authorization error has occurred.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/UnauthorizedResponse"
+    NotFoundResponse:
+      description: The requested resource was not found.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
+  callbacks:
+    jobStatusChanged:
+      "{$request.body#/callback_url}":
+        post:
+          summary: Job Status Change Callback
+          description: |
+            Callback notification sent when a job status changes.
+
+            The callback payload contains the complete Job object with updated status information.
+            Partners can use this callback to track the status of their jobs and get notified when the job is complete.
+
+            ### Partner Authentication Token
+
+            To authenticate that the callback request comes from SASHA, a pre-shared token is included in
+            each callback request. Each partner is provided with a unique Partner Authentication Token that
+            SASHA will include in the `Authorization: Bearer <token>` header when calling the Partner's
+            callback endpoints.
+
+            ### Callback Payload Authentication
+
+            To protect the payload of the callback from tampering in transit, SASHA provides a signature
+            of the request payload using the HMAC-SHA256 algorithm. The key for the HMAC-SHA256 algorithm
+            is the Callback Secret that the Partner receives from SASHA.
+
+            The request signature is calculated over a few fields concatenated together:
+
+            ```
+            HMAC-SHA256(request_method || request_url || request_id || request_payload)
+            ```
+
+            Where `||` is the concatenation operator without any separator or padding.
+
+            - The request method is the HTTP method of the request in uppercase, e.g. `POST`.
+            - The request url is the URL of the request without the fragment and query parameters.
+            - The request id is the value of the `SASHA-Request-ID` header.
+            - The request payload is the JSON request body.
+
+            The request signature is included in the `SASHA-Request-Signature` header.
+
+            While validating the signature is not mandatory, SASHA recommends to do so to ensure the
+            payload genuinely comes from SASHA and was not modified in transit.
+
+            #### Validating the request signature
+
+            Your application should verify that the callback request is genuine and was sent by SASHA
+            before responding to the request. This is important for securing sensitive data and protecting
+            your application from abuse.
+
+            SASHA includes the request signature in the `SASHA-Request-Signature` HTTP header.
+
+            ##### Example
+
+            Here is an example of how to validate the request signature for the request below:
+
+            - Callback Secret: `MTIzNDU2Nzg5MDEyMzQ1Njc4OTAxMjM0NTY3ODkwMTI=`
+            - Request method: `POST`
+            - Request url: `https://your-app.com/callbacks/sasha-job-update`
+            - Request id: `aa-b-c-d-ee`
+            - Request payload: `{"job_id":"1234567890","type":"embed-signature","status":"pending","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}`
+
+            The concatenated string would be:
+            ```
+            POSThttps://your-app.com/callbacks/sasha-job-updateaa-b-c-d-ee{"job_id":"1234567890","type":"embed-signature","status":"pending","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}
+            ```
+
+            The request signature is `d7137c82af30e6db405ad73b4a0c11442e8e228b4d05fde2e84228b99508ae2c`.
+
+            ### Request Identification
+
+            Each callback delivery includes a unique `SASHA-Request-ID` header that you can use for tracking,
+            debugging, and ensuring idempotency.
+          operationId: JobStatusChangedCallback
+          security:
+            - CallbackBearerAuth: []
+          requestBody:
+            required: true
+            content:
+              application/json:
+                schema:
+                  $ref: "#/components/schemas/Job"
+          parameters:
+            - name: Authorization
+              in: header
+              required: true
+              schema:
+                type: string
+              description: |
+                Pre-shared Bearer token for callback authentication.
+                Format: `Bearer <token>`
+                Each Partner is provided with a unique authentication token.
+            - name: SASHA-Request-Signature
+              in: header
+              required: true
+              schema:
+                type: string
+              description: |
+                HMAC-SHA256 signature of the request payload.
+
+                See https://developer.sasha.eu/partner-api/api-reference/rest-api/job-status-changed-callback#callback-payload-authentication
+            - name: SASHA-Request-ID
+              in: header
+              required: true
+              schema:
+                type: string
+              description: Unique identifier for this callback delivery request
+          responses:
+            "200":
+              description: Callback received successfully
+            "201":
+              description: Callback received successfully
+            "202":
+              description: Callback received successfully
+            "204":
+              description: Callback received successfully
+            "400":
+              description: Bad request
+            "401":
+              description: Unauthorized
+            "403":
+              description: Forbidden
+            "404":
+              description: Not found
+            "500":
+              description: Internal server error
+            "502":
+              description: Bad gateway
+            "503":
+              description: Service unavailable
+            "504":
+              description: Gateway timeout
+
+  examples:
+    embedRequestFromURLWithCallback:
+      summary: Embed Signature request from URL with callback
+      value:
+        media_url: "https://example.com/image.jpg"
+        media_mime_type: "image/jpeg"
+        callback_url: "https://your-app.com/callbacks/sasha-job-update"
+    lookupRequestFromURLWithCallback:
+      summary: Lookup Signature request from URL with callback
+      value:
+        media_url: "https://example.com/image.jpg"
+        media_mime_type: "image/jpeg"
+        callback_url: "https://your-app.com/callbacks/sasha-job-update"
+    embedJobPending:
+      summary: Embed Signature job pending
+      value:
+        job_id: "job_12345"
+        type: "embed-signature"
+        status: "pending"
+        created_at: "2025-01-01T00:00:00Z"
+        updated_at: "2025-01-01T00:00:00Z"
+    embedJobResponsePending:
+      summary: Embed Signature job pending
+      value:
+        job:
+          job_id: "job_12345"
+          type: "embed-signature"
+          status: "pending"
+          created_at: "2025-01-01T00:00:00Z"
+          updated_at: "2025-01-01T00:00:00Z"
+    lookupJobPending:
+      summary: Lookup Signature job pending
+      value:
+        job_id: "job_12345"
+        type: "lookup-signature"
+        status: "pending"
+        created_at: "2025-01-01T00:00:00Z"
+        updated_at: "2025-01-01T00:00:00Z"
+    lookupJobResponsePending:
+      summary: Lookup Signature job pending
+      value:
+        job:
+          job_id: "job_12345"
+          type: "lookup-signature"
+          status: "pending"
+          created_at: "2025-01-01T00:00:00Z"
+          updated_at: "2025-01-01T00:00:00Z"
+    embedJobCompleted:
+      summary: Embed Signature job completed successfully
+      value:
+        job_id: "job_12345"
+        type: "embed-signature"
+        status: "completed"
+        output_url: "https://storage.example.com/processed-image.jpg"
+        output_url_expires_at: "2025-01-01T01:00:00Z"
+        signature_id: "12345678901234567890"
+        created_at: "2025-01-01T00:00:00Z"
+        updated_at: "2025-01-01T00:00:00Z"
+    lookupJobCompleted:
+      summary: Lookup Signature job completed successfully
+      value:
+        job_id: "job_12345"
+        type: "lookup-signature"
+        status: "completed"
+        signature_id: "12345678901234567890"
+        created_at: "2025-01-01T00:00:00Z"
+        updated_at: "2025-01-01T00:00:00Z"
+    embedJobFailed:
+      summary: Embed Signature job failed with error
+      value:
+        job_id: "job_12345"
+        type: "embed-signature"
+        status: "failed"
+        error:
+          code: "image_load_failed"
+          message: "Unsupported image format"
+        created_at: "2025-01-01T00:00:00Z"
+        updated_at: "2025-01-01T00:00:00Z"
+    lookupJobFailed:
+      summary: Lookup Signature job failed with error
+      value:
+        job_id: "job_12345"
+        type: "lookup-signature"
+        status: "failed"
+        error:
+          code: "image_load_failed"
+          message: "Unsupported image format"
+        created_at: "2025-01-01T00:00:00Z"
+        updated_at: "2025-01-01T00:00:00Z"
+
+  schemas:
+    AuthErrorResponse:
+      # OAuth 2.0 Error Response
+      # https://datatracker.ietf.org/doc/html/rfc6749#section-5.2
+      type: object
+      required:
+        - error
+      properties:
+        error:
+          type: string
+          description: |
+            The error code.
+          enum:
+            # The request is missing a required parameter, includes an unsupported parameter value
+            # (other than grant type), repeats a parameter, includes multiple credentials,
+            # utilizes more than one mechanism for authenticating the client, or is otherwise
+            # malformed.
+            - "invalid_request"
+
+            # Client authentication failed (e.g., unknown client, no client authentication
+            # included, or unsupported authentication method). The authorization server MAY return
+            # an HTTP 401 (Unauthorized) status code to indicate which HTTP authentication schemes
+            # are supported.  If the client attempted to authenticate via the "Authorization"
+            # request header field, the authorization server MUST respond with an
+            # HTTP 401 (Unauthorized) status code and include the "WWW-Authenticate" response
+            # header field matching the authentication scheme used by the client.
+            - "invalid_client"
+
+            # The provided authorization grant (e.g., authorization code, resource owner credentials)
+            # or refresh token is invalid, expired, revoked, does not match the redirection URI used
+            # in the authorization request, or was issued to another client.
+            - "invalid_grant"
+
+            # The authenticated client is not authorized to use this authorization grant type.
+            - "unauthorized_client"
+
+            # The authorization grant type is not supported by the authorization server.
+            - "unsupported_grant_type"
+
+            # The requested scope is invalid, unknown, malformed, or exceeds the scope granted by the resource owner.
+            - "invalid_scope"
+        error_description:
+          type: string
+          description: |
+            Human-readable text providing additional information, used to assist the client
+            developer in understanding the error that occurred.
+        error_uri:
+          type: string
+          description: |
+            A URI identifying a human-readable web page with information about the error, used to
+            provide the client developer with additional information about the error.
+
+    ErrorResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+
+    UnauthorizedResponse:
+      type: object
+      required:
+        - message
+      properties:
+        message:
+          type: string
+
+    GetTokenRequest:
+      type: object
+      required:
+        - grant_type
+      properties:
+        grant_type:
+          type: string
+          description: |
+            The grant type. Must be "client_credentials".
+          examples:
+            - "client_credentials"
+
+    GetTokenResponse:
+      type: object
+      required:
+        - access_token
+        - token_type
+        - expires_in
+      properties:
+        access_token:
+          type: string
+          description: An access token that can be provided in subsequent calls, for example, to SASHA Partner API services.
+        token_type:
+          type: string
+          description: |
+            How the access token may be used. Always "Bearer".
+          examples:
+            - "Bearer"
+        expires_in:
+          type: integer
+          description: The time period (in seconds) for which the access token is valid.
+
+    JobStatus:
+      type: string
+      enum:
+        - pending
+        - completed
+        - failed
+      description: |
+        The status of the job:
+        * `pending`: The job has been accepted and is waiting to be processed
+        * `completed`: The job is completed successfully
+        * `failed`: The job failed with an error
+
+    EmbedSignatureFromURLRequest:
+      type: object
+      required:
+        - media_url
+      properties:
+        media_url:
+          type: string
+          description: The URL of the media file to protect by embedding the SASHA Signature into
+          examples:
+            - "https://example.com/image.jpg"
+        media_mime_type:
+          type: string
+          description: |
+            The MIME type of the media file at the given URL.
+
+            If not provided, the MIME type will be inferred from the URL.
+
+            The following MIME types are supported:
+            - `image/jpeg`
+            - `image/png`
+          examples:
+            - "image/jpeg"
+        callback_url:
+          type: string
+          format: uri
+          description: Optional callback URL to receive job status notifications
+          examples:
+            - "https://your-app.com/callbacks/sasha-job-update"
+
+    EmbedSignatureFromDataRequest:
+      type: object
+      required:
+        - media
+      properties:
+        media:
+          type: string
+          # "format" is deprecated, we should use contentMediaType instead
+          # but we need to keep it for backward compatibility as not all
+          # clients support contentMediaType
+          format: binary
+          contentMediaType: application/octet-stream
+          description: The media file to protect by embedding the SASHA Signature into
+        callback_url:
+          type: string
+          format: uri
+          description: Optional callback URL to receive job status notifications
+          examples:
+            - "https://your-app.com/callbacks/sasha-job-update"
+
+    EmbedSignatureResponse:
+      type: object
+      required:
+        - job
+      properties:
+        job:
+          $ref: "#/components/schemas/Job"
+
+    Job:
+      type: object
+      required:
+        - job_id
+        - type
+        - status
+        - created_at
+        - updated_at
+      properties:
+        job_id:
+          type: string
+          description: The ID of the job
+        type:
+          $ref: "#/components/schemas/JobType"
+        status:
+          $ref: "#/components/schemas/JobStatus"
+        error:
+          $ref: "#/components/schemas/JobError"
+          description: |
+            The error that occurred while processing the job, if the job `status` is `failed`
+        output_url:
+          type: string
+          description: |
+            The URL of the result media file (only populated if job `status` is `completed` and `type` is `embed-signature`)
+          examples:
+            - "https://storage.example.com/processed-image.jpg"
+        output_url_expires_at:
+          type: string
+          format: date-time
+          description: The date and time the output URL will expire
+          examples:
+            - "2025-01-01T00:00:00Z"
+        signature_id:
+          oneOf:
+            - $ref: "#/components/schemas/SignatureID"
+            - type: "null"
+          description: |
+            The Signature identifier (populated when job `status` is `completed`).
+            Will be `null` if no signature was found in the image.
+        created_at:
+          type: string
+          format: date-time
+          description: The date and time the job was created
+          examples:
+            - "2025-01-01T00:00:00Z"
+        updated_at:
+          type: string
+          format: date-time
+          description: The date and time the job was last updated
+          examples:
+            - "2025-01-01T00:00:00Z"
+
+    JobError:
+      type: object
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: string
+          description: |
+            Error codes:
+            * `failed_to_fetch_from_url`: There was an issue fetching image from the provided image URL
+            * `image_already_protected`: The image is already protected with SASHA Signature
+            * `image_load_failed`: The image is not a valid image e.g. corrupted or invalid format
+            * `image_too_large`: The image is too large to process
+            * `image_too_small`: The image is too small to process
+            * `internal`: An internal error occurred
+          enum:
+            - "failed_to_fetch_from_url"
+            - "image_already_protected"
+            - "image_load_failed"
+            - "image_too_large"
+            - "image_too_small"
+            - "internal"
+        message:
+          type: string
+          description: A developer-facing error message
+          examples:
+            - "Unsupported image format"
+
+    JobType:
+      type: string
+      enum:
+        - "embed-signature"
+        - "lookup-signature"
+      description: |
+        The type of the job:
+        * `embed-signature`: The job is to embed a SASHA Signature into an image
+        * `lookup-signature`: The job is to check if an image is already protected with SASHA Signature
+
+    SignatureID:
+      type: string
+      description: |
+        The globally unique identifier of the SASHA Signature embedded into the image.
+
+        The SignatureID is an unsigned 64-bit integer.
+
+        In JSON representation, the SignatureID is represented as a string.
+      examples:
+        - "12345678901234567890"
+
+    LookupSignatureFromURLRequest:
+      type: object
+      required:
+        - media_url
+      properties:
+        media_url:
+          type: string
+          description: The URL of the media file to lookup the SASHA Signature from
+          examples:
+            - "https://example.com/image.jpg"
+        media_mime_type:
+          type: string
+          description: |
+            The MIME type of the media file at the given URL.
+
+            If not provided, the MIME type will be inferred from the URL.
+
+            The following MIME types are supported:
+            - `image/jpeg`
+            - `image/png`
+          examples:
+            - "image/jpeg"
+        callback_url:
+          type: string
+          format: uri
+          description: Optional callback URL to receive job status notifications
+          examples:
+            - "https://your-app.com/callbacks/sasha-job-update"
+
+    LookupSignatureFromDataRequest:
+      type: object
+      required:
+        - media
+      properties:
+        media:
+          type: string
+          # "format" is deprecated, we should use contentMediaType instead
+          # but we need to keep it for backward compatibility as not all
+          # clients support contentMediaType
+          format: binary
+          contentMediaType: application/octet-stream
+          description: The media file to lookup the SASHA Signature from
+        callback_url:
+          type: string
+          format: uri
+          description: Optional callback URL to receive job status notifications
+          examples:
+            - "https://your-app.com/callbacks/sasha-job-update"
+
+    LookupSignatureResponse:
+      type: object
+      required:
+        - job
+      properties:
+        job:
+          $ref: "#/components/schemas/Job"
+
+    ListJobsResponse:
+      type: object
+      required:
+        - jobs
+      properties:
+        jobs:
+          type: array
+          items:
+            $ref: "#/components/schemas/Job"
+          description: List of jobs

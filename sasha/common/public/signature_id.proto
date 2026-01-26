@@ -1,0 +1,15 @@
+// Copyright 2025 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.common.public;
+
+option java_package = "eu.sasha.common.pub";
+option java_multiple_files = true;
+option java_outer_classname = "SignatureIdProto";
+
+// Globally unique identifier for a signature embedded into a media content.
+message SignatureID {
+  // Required. The 64-bit signature value.
+  fixed64 value = 1;
+}

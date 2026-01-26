@@ -1,0 +1,273 @@
+// Copyright 2025 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.partnerapi.v1;
+
+import "google/protobuf/wrappers.proto";
+
+import "sasha/partner-api/v1/job.proto";
+
+// Service for Partners working with SASHA Signature.
+//
+// # Authentication
+//
+// All registered Partners are assigned a `client_id` and `client_secret`
+// credentials that are provided by SASHA.
+//
+// Partners must authenticate with the
+// `PartnerAPI.AuthenticateWithClientCredential` RPC using their `client_id` and
+// `client_secret` credentials, and then pass the resulting access token in the
+// "Authorization" metadata with the format `Bearer <token>`.
+//
+// # Error handling
+//
+// The service RPCs may return the following errors:
+//
+// - **Token expired**
+//   If the provided token is expired, the service returns an "UNAUTHENTICATED"
+//   status code with the message starting with "Token expired".
+//
+// - **Token not provided**
+//   If the token is not provided in the "Authorization" metadata, the service
+//   returns an "UNAUTHENTICATED" status code with the message starting with
+//   "Token not provided".
+//
+// - **Invalid token**
+//   If the provided token is invalid, the service returns an "UNAUTHENTICATED"
+//   status code with the message starting with "Invalid token".
+//
+// - **Other authorization issues**
+//   The service may return an "UNAUTHENTICATED" status code for other
+//   authorization issues.
+service PartnerAPI {
+  // ----------------------------------------------------------------------------
+  // Authentication
+  // ----------------------------------------------------------------------------
+
+  // Grants an application access to a service using client credentials.
+  // Returns an access token that can be used to authenticate with the service.
+  rpc AuthenticateWithClientCredential(AuthenticateWithClientCredentialRequest)
+      returns (AuthenticateWithClientCredentialResponse) {
+    option idempotency_level = IDEMPOTENT;
+  }
+
+  // ----------------------------------------------------------------------------
+  // Embed Signature
+  // ----------------------------------------------------------------------------
+
+  // Send a request to embed a SASHA Signature into the given media content.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  rpc EmbedSignatureFromURL(EmbedSignatureFromURLRequest)
+      returns (EmbedSignatureFromURLResponse) {}
+
+  // Send a request to embed a SASHA Signature into the given media content.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  rpc EmbedSignatureFromData(stream EmbedSignatureFromDataRequest)
+      returns (EmbedSignatureFromDataResponse) {}
+
+  // ----------------------------------------------------------------------------
+  // Lookup Signature
+  // ----------------------------------------------------------------------------
+
+  // Send a request to lookup a SASHA Signature from the given media content.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  rpc LookupSignatureFromURL(LookupSignatureFromURLRequest)
+      returns (LookupSignatureFromURLResponse) {}
+
+  // Send a request to lookup a SASHA Signature from the given media content.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  rpc LookupSignatureFromData(stream LookupSignatureFromDataRequest)
+      returns (LookupSignatureFromDataResponse) {}
+
+  // ----------------------------------------------------------------------------
+  // Job Management
+  // ----------------------------------------------------------------------------
+
+  // Gets a job by its ID.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  rpc GetJob(GetJobRequest) returns (Job) {}
+
+  // Lists all jobs.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  rpc ListJobs(ListJobsRequest) returns (ListJobsResponse) {}
+
+  // Watches a job by its ID waiting for the job to be completed.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  rpc WatchJob(WatchJobRequest) returns (stream WatchJobResponse) {}
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.AuthenticateWithClientCredential
+// ----------------------------------------------------------------------------
+
+message AuthenticateWithClientCredentialRequest {
+  // Required. Client ID of the application that accesses the service.
+  string client_id = 1;
+
+  // Required. The client secret of the application that accesses the service.
+  string client_secret = 2;
+}
+
+message AuthenticateWithClientCredentialResponse {
+  // Required. The access token for the authenticated client.
+  string access_token = 1;
+
+  // Required. Expiration time of the Access Token in seconds since the response
+  // was generated.
+  uint32 expires_in = 2;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.EmbedSignatureFromURL
+// ----------------------------------------------------------------------------
+
+message EmbedSignatureFromURLRequest {
+  // Required. The URL of the media file to protect by embedding the SASHA
+  // Signature into.
+  string media_url = 2;
+
+  // Optional. The MIME type of the media file at the given URL.
+  //
+  // If not provided, the MIME type will be inferred from the URL.
+  //
+  // The following MIME types are supported:
+  // - `image/jpeg`
+  // - `image/png`
+  google.protobuf.StringValue media_mime_type = 3;
+}
+
+message EmbedSignatureFromURLResponse {
+  // Required. The job that was created.
+  Job job = 1;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.EmbedSignatureFromData
+// ----------------------------------------------------------------------------
+
+message EmbedSignatureFromDataRequest {
+  // Required. The media file to protect by embedding the SASHA Signature into.
+  //
+  // The content may be streamed in chunks and the server will merge them into
+  // a single image.
+  //
+  // See also `media_mime_type` field.
+  bytes media_data_chunk = 1;
+
+  // Required. The MIME type of the media data.
+  //
+  // See also `media_data_chunk` field.
+  //
+  // The following MIME types are supported:
+  // - `image/jpeg`
+  // - `image/png`
+  string media_mime_type = 2;
+}
+
+message EmbedSignatureFromDataResponse {
+  // Required. The job that was created.
+  Job job = 1;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.LookupSignatureFromURL
+// ----------------------------------------------------------------------------
+
+message LookupSignatureFromURLRequest {
+  // Required. The URL of the media file to lookup the SASHA Signature from.
+  string media_url = 2;
+
+  // Optional. The MIME type of the media file at the given URL.
+  //
+  // If not provided, the MIME type will be inferred from the URL.
+  //
+  // The following MIME types are supported:
+  // - `image/jpeg`
+  // - `image/png`
+  google.protobuf.StringValue media_mime_type = 3;
+}
+
+message LookupSignatureFromURLResponse {
+  // Required. The job that was created.
+  Job job = 1;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.LookupSignatureFromData
+// ----------------------------------------------------------------------------
+
+message LookupSignatureFromDataRequest {
+  // Required. The media file to lookup the SASHA Signature from.
+  //
+  // The content may be streamed in chunks and the server will merge them into
+  // a single image.
+  //
+  // See also `media_mime_type` field.
+  bytes media_data_chunk = 1;
+
+  // Required. The MIME type of the media data.
+  //
+  // See also `media_data_chunk` field.
+  //
+  // The supported mime types are `image/jpeg` and `image/png`.
+  string media_mime_type = 2;
+}
+
+message LookupSignatureFromDataResponse {
+  // Required. The job that was created.
+  Job job = 1;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.GetJob
+// ----------------------------------------------------------------------------
+
+message GetJobRequest {
+  string job_id = 1;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.WatchJob
+// ----------------------------------------------------------------------------
+
+message WatchJobRequest {
+  string job_id = 1;
+}
+
+message WatchJobResponse {
+  Job job = 1;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.ListJobs
+// ----------------------------------------------------------------------------
+
+message ListJobsRequest {
+  // Empty message for future extensibility.
+}
+
+message ListJobsResponse {
+  repeated Job jobs = 1;
+}

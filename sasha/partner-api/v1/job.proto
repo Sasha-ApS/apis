@@ -1,0 +1,116 @@
+// Copyright 2025 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.partnerapi.v1;
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+
+import "sasha/common/public/signature_id.proto";
+
+message Job {
+  enum Type {
+    TYPE_UNSPECIFIED = 0;
+
+    // The job is for embedding a SASHA Signature into a new media content.
+    TYPE_EMBED_SIGNATURE = 1;
+
+    // The job is for checking whether the media content contains a SASHA
+    // Signature.
+    TYPE_LOOKUP_SIGNATURE = 2;
+  }
+
+  enum Status {
+    // Unused. Default unspecified value when the field is not set. Proto3
+    // requires first enum to be 0.
+    STATUS_UNSPECIFIED = 0;
+
+    // The job was accepted and has not started yet.
+    STATUS_PENDING = 1;
+
+    // The job was successfully completed.
+    STATUS_COMPLETED = 3;
+
+    // The job failed.
+    STATUS_FAILED = 4;
+  }
+
+  message Error {
+    enum Code {
+      CODE_UNSPECIFIED = 0;
+
+      // An internal error occurred while processing the job.
+      //
+      // This is a generic error code that should be used for errors that are
+      // not covered by other error codes.
+      CODE_INTERNAL = 1;
+
+      // The input image for the embed job is already protected with SASHA
+      // Signature.
+      CODE_IMAGE_ALREADY_PROTECTED = 2;
+
+      // The input image is not a valid image. This can happen if the input
+      // image is not a valid image e.g. corrupted or invalid format.
+      CODE_IMAGE_LOAD_FAILED = 3;
+
+      // The input image is too large. This can happen if the input image is
+      // too large to process.
+      CODE_IMAGE_TOO_LARGE = 4;
+
+      // The input image is too small. This can happen if the input image is
+      // too small to process.
+      CODE_IMAGE_TOO_SMALL = 5;
+    }
+
+    // Required. Error code.
+    Code code = 1;
+
+    // Required. A developer-facing error message.
+    //
+    // This is a developer-facing error message that should be used to help the
+    // developer understand the error and fix it.
+    string message = 2;
+  }
+
+  // Required. The ID of the job.
+  string job_id = 1;
+
+  // Required. The type of the job.
+  Type type = 2;
+
+  // Required. The status of the job.
+  Status status = 3;
+
+  // Optional. The error that occurred while processing the job, if the job is
+  // failed.
+  Error error = 4;
+
+  // Optional. The URL of the result media file.
+  //
+  // This is only populated if the job is completed and the job type is
+  // `TYPE_EMBED_SIGNATURE`.
+  google.protobuf.StringValue output_url = 5;
+
+  // Optional. The date and time the output URL will expire.
+  //
+  // This is only populated if the job is completed and the job type is
+  // `TYPE_EMBED_SIGNATURE`.
+  google.protobuf.Timestamp output_url_expires_at = 6;
+
+  // Optional. The signature identifier, if the job is completed.
+  //
+  // For job type `TYPE_EMBED_SIGNATURE`, this is the SignatureID that was
+  // embedded into the media content.
+  //
+  // For job type `TYPE_LOOKUP_SIGNATURE`, this is the SignatureID that was
+  // found in the media content. If the lookup failed to detect the signature,
+  // this field is not populated.
+  sasha.common.public.SignatureID signature_id = 7;
+
+  // Required. The date and time the job was created.
+  google.protobuf.Timestamp created_at = 8;
+
+  // Required. The date and time the job was last updated.
+  google.protobuf.Timestamp updated_at = 9;
+}
