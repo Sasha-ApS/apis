@@ -1,4 +1,4 @@
-// Copyright 2025 Sasha ApS
+// Copyright 2025-2026 Sasha ApS
 
 syntax = "proto3";
 
@@ -107,6 +107,12 @@ message Job {
   // found in the media content. If the lookup failed to detect the signature,
   // this field is not populated.
   sasha.common.public.SignatureID signature_id = 7;
+
+  // Optional. The creator ID of the signature, if the lookup job is completed.
+  //
+  // This is only populated if the job is completed and the job type is
+  // `TYPE_LOOKUP_SIGNATURE`.
+  google.protobuf.UInt32Value creator_id = 10;
 
   // Required. The date and time the job was created.
   google.protobuf.Timestamp created_at = 8;

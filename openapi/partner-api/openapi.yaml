@@ -33,7 +33,7 @@ info:
     the image file or the URL to the image file.
 
     The server will return a Job object with the job ID and status. Once the job is complete,
-    the Job object will contain the `signature_id` field if a SASHA Signature is found.
+    the Job object will contain the `signature_id` and `creator_id` fields if a SASHA Signature is found.
 
     ## Job Status and Callbacks
 
@@ -54,7 +54,7 @@ info:
   contact:
     name: API Support
     email: support@sasha.eu
-  version: "1.0.0"
+  version: "1.1.1"
 
 externalDocs:
   description: SASHA Developer Portal
@@ -288,12 +288,6 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Bearer token obtained from `GetToken` endpoint
-    CallbackBearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: string
-      description: Bearer token, see [Callback Notifications](#callback-notifications) for more details.
-
   responses:
     ErrorResponse:
       description: An error has occurred.
@@ -325,13 +319,6 @@ components:
             The callback payload contains the complete Job object with updated status information.
             Partners can use this callback to track the status of their jobs and get notified when the job is complete.
 
-            ### Partner Authentication Token
-
-            To authenticate that the callback request comes from SASHA, a pre-shared token is included in
-            each callback request. Each partner is provided with a unique Partner Authentication Token that
-            SASHA will include in the `Authorization: Bearer <token>` header when calling the Partner's
-            callback endpoints.
-
             ### Callback Payload Authentication
 
             To protect the payload of the callback from tampering in transit, SASHA provides a signature
@@ -353,6 +340,13 @@ components:
 
             The request signature is included in the `SASHA-Request-Signature` header.
 
+            The Callback Secret used to sign the request payload is identified by its
+            Callback Secret ID, returned in the `SASHA-Callback-Secret-ID` header. Use this
+            header to look up the matching signing key when you have more than one Callback
+            Secret configured (for example, during a key rotation). You can also pin a
+            specific Callback Secret per job by passing `callback_secret_id` when submitting
+            the job.
+
             While validating the signature is not mandatory, SASHA recommends to do so to ensure the
             payload genuinely comes from SASHA and was not modified in transit.
 
@@ -372,22 +366,21 @@ components:
             - Request method: `POST`
             - Request url: `https://your-app.com/callbacks/sasha-job-update`
             - Request id: `aa-b-c-d-ee`
-            - Request payload: `{"job_id":"1234567890","type":"embed-signature","status":"pending","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}`
+            - Request payload: `{"job_id":"44cab986-0385-470a-8e5c-c657b0543d19","type":"embed-signature","status":"completed","output_url":"https://storage.sasha.eu/1420f12bb0e7a31104f90311d6e","output_url_expires_at":"2026-01-01T13:00:00.000Z","signature_id":"340558932877813735","creator_id":1,"created_at":"2026-01-01T12:00:00.000Z","updated_at":"2026-01-01T12:00:02.000Z"}`
 
             The concatenated string would be:
             ```
-            POSThttps://your-app.com/callbacks/sasha-job-updateaa-b-c-d-ee{"job_id":"1234567890","type":"embed-signature","status":"pending","created_at":"2025-01-01T00:00:00Z","updated_at":"2025-01-01T00:00:00Z"}
+            POSThttps://your-app.com/callbacks/sasha-job-updateaa-b-c-d-ee{"job_id":"44cab986-0385-470a-8e5c-c657b0543d19","type":"embed-signature","status":"completed","output_url":"https://storage.sasha.eu/1420f12bb0e7a31104f90311d6e","output_url_expires_at":"2026-01-01T13:00:00.000Z","signature_id":"340558932877813735","creator_id":1,"created_at":"2026-01-01T12:00:00.000Z","updated_at":"2026-01-01T12:00:02.000Z"}
             ```
 
-            The request signature is `d7137c82af30e6db405ad73b4a0c11442e8e228b4d05fde2e84228b99508ae2c`.
+            The request signature is `f3d43248aca374a88fc02bbf29711d02bea65a688f9d28cc19534caf1c5340eb`.
 
             ### Request Identification
 
             Each callback delivery includes a unique `SASHA-Request-ID` header that you can use for tracking,
             debugging, and ensuring idempotency.
           operationId: JobStatusChangedCallback
-          security:
-            - CallbackBearerAuth: []
+          security: []
           requestBody:
             required: true
             content:
@@ -395,15 +388,25 @@ components:
                 schema:
                   $ref: "#/components/schemas/Job"
           parameters:
-            - name: Authorization
+            - name: SASHA-Callback-Secret-ID
               in: header
               required: true
               schema:
                 type: string
+                examples:
+                  - "177F01DA-34F2-4318-9763-B73876FDD7FA"
               description: |
-                Pre-shared Bearer token for callback authentication.
-                Format: `Bearer <token>`
-                Each Partner is provided with a unique authentication token.
+                Identifier of the Callback Secret that was used to sign this
+                callback request.
+
+                Use it to look up the matching signing key when validating the
+                `SASHA-Request-Signature`. This is how SASHA tells you which of
+                your configured Callback Secrets was selected — either the one
+                you pinned via `callback_secret_id` on the original job, or the
+                one SASHA chose automatically when no ID was provided.
+
+                If you only have a single Callback Secret configured, you can
+                ignore this header.
             - name: SASHA-Request-Signature
               in: header
               required: true
@@ -451,12 +454,14 @@ components:
       value:
         media_url: "https://example.com/image.jpg"
         media_mime_type: "image/jpeg"
+        callback_secret_id: "177F01DA-34F2-4318-9763-B73876FDD7FA"
         callback_url: "https://your-app.com/callbacks/sasha-job-update"
     lookupRequestFromURLWithCallback:
       summary: Lookup Signature request from URL with callback
       value:
         media_url: "https://example.com/image.jpg"
         media_mime_type: "image/jpeg"
+        callback_secret_id: "177F01DA-34F2-4318-9763-B73876FDD7FA"
         callback_url: "https://your-app.com/callbacks/sasha-job-update"
     embedJobPending:
       summary: Embed Signature job pending
@@ -510,6 +515,7 @@ components:
         type: "lookup-signature"
         status: "completed"
         signature_id: "12345678901234567890"
+        creator_id: 1234567890
         created_at: "2025-01-01T00:00:00Z"
         updated_at: "2025-01-01T00:00:00Z"
     embedJobFailed:
@@ -669,6 +675,24 @@ components:
             - `image/png`
           examples:
             - "image/jpeg"
+        callback_secret_id:
+          type: string
+          description: |
+            Optional identifier of the Callback Secret SASHA should use to sign the
+            callback payload for this job.
+
+            Each Callback Secret you have configured with SASHA has a unique
+            Callback Secret ID. Pass it here to pin a job's callback signature to
+            a specific secret — useful while rotating secrets, or when different
+            parts of your system verify callbacks with different keys.
+
+            If omitted, SASHA picks one of your enabled Callback Secrets
+            automatically. The Callback Secret that was actually used is always
+            returned in the `SASHA-Callback-Secret-ID` HTTP header on the
+            callback request, so your endpoint can look up the matching signing
+            key when validating the `SASHA-Request-Signature`.
+          examples:
+            - "177F01DA-34F2-4318-9763-B73876FDD7FA"
         callback_url:
           type: string
           format: uri
@@ -689,6 +713,24 @@ components:
           format: binary
           contentMediaType: application/octet-stream
           description: The media file to protect by embedding the SASHA Signature into
+        callback_secret_id:
+          type: string
+          description: |
+            Optional identifier of the Callback Secret SASHA should use to sign the
+            callback payload for this job.
+
+            Each Callback Secret you have configured with SASHA has a unique
+            Callback Secret ID. Pass it here to pin a job's callback signature to
+            a specific secret — useful while rotating secrets, or when different
+            parts of your system verify callbacks with different keys.
+
+            If omitted, SASHA picks one of your enabled Callback Secrets
+            automatically. The Callback Secret that was actually used is always
+            returned in the `SASHA-Callback-Secret-ID` HTTP header on the
+            callback request, so your endpoint can look up the matching signing
+            key when validating the `SASHA-Request-Signature`.
+          examples:
+            - "177F01DA-34F2-4318-9763-B73876FDD7FA"
         callback_url:
           type: string
           format: uri
@@ -743,6 +785,14 @@ components:
           description: |
             The Signature identifier (populated when job `status` is `completed`).
             Will be `null` if no signature was found in the image.
+        creator_id:
+          type: integer
+          description: The creator ID of the signature (populated when job `status` is `completed` and `type` is `lookup-signature`)
+          format: uint32
+          minimum: 0
+          maximum: 4294967295
+          examples:
+            - 1234567890
         created_at:
           type: string
           format: date-time
@@ -828,6 +878,24 @@ components:
             - `image/png`
           examples:
             - "image/jpeg"
+        callback_secret_id:
+          type: string
+          description: |
+            Optional identifier of the Callback Secret SASHA should use to sign the
+            callback payload for this job.
+
+            Each Callback Secret you have configured with SASHA has a unique
+            Callback Secret ID. Pass it here to pin a job's callback signature to
+            a specific secret — useful while rotating secrets, or when different
+            parts of your system verify callbacks with different keys.
+
+            If omitted, SASHA picks one of your enabled Callback Secrets
+            automatically. The Callback Secret that was actually used is always
+            returned in the `SASHA-Callback-Secret-ID` HTTP header on the
+            callback request, so your endpoint can look up the matching signing
+            key when validating the `SASHA-Request-Signature`.
+          examples:
+            - "177F01DA-34F2-4318-9763-B73876FDD7FA"
         callback_url:
           type: string
           format: uri
@@ -848,6 +916,24 @@ components:
           format: binary
           contentMediaType: application/octet-stream
           description: The media file to lookup the SASHA Signature from
+        callback_secret_id:
+          type: string
+          description: |
+            Optional identifier of the Callback Secret SASHA should use to sign the
+            callback payload for this job.
+
+            Each Callback Secret you have configured with SASHA has a unique
+            Callback Secret ID. Pass it here to pin a job's callback signature to
+            a specific secret — useful while rotating secrets, or when different
+            parts of your system verify callbacks with different keys.
+
+            If omitted, SASHA picks one of your enabled Callback Secrets
+            automatically. The Callback Secret that was actually used is always
+            returned in the `SASHA-Callback-Secret-ID` HTTP header on the
+            callback request, so your endpoint can look up the matching signing
+            key when validating the `SASHA-Request-Signature`.
+          examples:
+            - "177F01DA-34F2-4318-9763-B73876FDD7FA"
         callback_url:
           type: string
           format: uri

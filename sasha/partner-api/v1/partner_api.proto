@@ -134,8 +134,8 @@ message AuthenticateWithClientCredentialResponse {
   // Required. The access token for the authenticated client.
   string access_token = 1;
 
-  // Required. Expiration time of the Access Token in seconds since the response
-  // was generated.
+  // Required. Lifetime of the access token in seconds from the time of
+  // issuance.
   uint32 expires_in = 2;
 }
 
@@ -245,6 +245,7 @@ message LookupSignatureFromDataResponse {
 // ----------------------------------------------------------------------------
 
 message GetJobRequest {
+  // Required. The identifier of the job to retrieve.
   string job_id = 1;
 }
 
@@ -253,10 +254,12 @@ message GetJobRequest {
 // ----------------------------------------------------------------------------
 
 message WatchJobRequest {
+  // Required. The identifier of the job to watch.
   string job_id = 1;
 }
 
 message WatchJobResponse {
+  // Required. The current state of the watched job.
   Job job = 1;
 }
 
