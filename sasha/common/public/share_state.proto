@@ -1,0 +1,40 @@
+// Copyright 2026 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.common.public;
+
+option java_package = "eu.sasha.common.pub";
+option java_multiple_files = true;
+option java_outer_classname = "ShareStateProto";
+
+// The creator-declared share state of a protected media item.
+//
+// The share state is the top-level statement of distribution intent carried
+// by a `Record`. A signature without a Record is treated as
+// `SHARE_STATE_PRIVATE`.
+//
+// A share state describes only the intent the creator has declared to SASHA.
+// It is not a statement about the legal status of the media; rights such as
+// copyright apply independently.
+enum ShareState {
+  // Unused. Default unspecified value when the field is not set. Proto3
+  // requires first enum to be 0.
+  //
+  // Rejected on write (`Record.share_state` must be set explicitly); treated
+  // as `SHARE_STATE_PRIVATE` if encountered on read.
+  SHARE_STATE_UNSPECIFIED = 0;
+
+  // The creator declared that the media is not intended to be distributed
+  // anywhere public.
+  SHARE_STATE_PRIVATE = 1;
+
+  // The creator declared no distribution restrictions for the media.
+  SHARE_STATE_UNRESTRICTED = 2;
+
+  // The creator declared that the media is intended to be distributed only
+  // where the Record's distribution fields permit (URL patterns and/or time
+  // window). The fields form a permit list: a Record that carries none of
+  // them yet permits no locations, until the creator adds them.
+  SHARE_STATE_RESTRICTED = 3;
+}

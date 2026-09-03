@@ -1,0 +1,30 @@
+// Copyright 2026 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.common.public;
+
+option java_package = "eu.sasha.common.pub";
+option java_multiple_files = true;
+option java_outer_classname = "RecordFieldProto";
+
+// Identifies a core (strongly-typed) field of `sasha.common.public.Record`
+// for access-control and disclosure purposes.
+//
+// A closed enum is used deliberately instead of raw protobuf field numbers:
+// access-control data is persisted, and binding it to wire field numbers would
+// let a future renumbering silently re-point a grant. Custom
+// fields (`Record.custom_fields`) are addressed by their string key, not this
+// enum.
+enum RecordField {
+  RECORD_FIELD_UNSPECIFIED          = 0;
+  RECORD_FIELD_SHARE_STATE          = 1;
+  RECORD_FIELD_ALLOWED_PUBLISH_URLS = 2;
+  RECORD_FIELD_ALLOWED_SOURCE_URLS  = 3;
+  RECORD_FIELD_ALLOWED_FROM         = 4;
+  RECORD_FIELD_ALLOWED_TO           = 5;
+  RECORD_FIELD_BYLINE               = 6;
+  RECORD_FIELD_PURCHASE_URL         = 7;
+  RECORD_FIELD_LICENSEE             = 8;
+  RECORD_FIELD_ASSET_SOURCE_ID      = 9;
+}

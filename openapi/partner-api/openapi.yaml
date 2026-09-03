@@ -35,6 +35,19 @@ info:
     The server will return a Job object with the job ID and status. Once the job is complete,
     the Job object will contain the `signature_id` and `creator_id` fields if a SASHA Signature is found.
 
+    ## Records and Distribution Guidance
+
+    Partners can attach a Record to a signature they registered using the `/signature/{signature_id}/record`
+    endpoints. A Record carries the creator's declared distribution intent (where and when the media
+    is allowed to appear) and display metadata.
+
+    When a lookup finds a signature, the completed Job includes a `guidance` object: SASHA's
+    evaluation of the found signature's Record against the `publish_url` and `source_url` provided
+    in the lookup request. Guidance contains coarse values plus an optional human-readable
+    `message`; the Record contents are never disclosed to the party performing the lookup, though
+    the `message` may name domains from the Record's allowed URL patterns (domain names are public
+    knowledge).
+
     ## Job Status and Callbacks
 
     All operations are asynchronous and return a Job object with a unique job_id. You can:
@@ -51,10 +64,50 @@ info:
 
     Partners can validate the callback request to ensure it genuinely comes from SASHA and was not
     modified in transit, see callback documentation below.
+
+    ## Error responses
+
+    Every response carries a `SASHA-Request-ID` header identifying that request. Quote it when
+    contacting SASHA support: it is what joins your call to the server-side logs.
+
+    A failing request to the Signature, Job or Record endpoints returns an `ErrorResponse`:
+
+    ```json
+    {
+      "message": "purchase_url must use the https: protocol (+2 more)",
+      "request_id": "8f14e45f-ceea-467a-9f0b-2b3a2c5a7d61",
+      "details": [
+        {
+          "field": "purchase_url",
+          "reason": "UNSUPPORTED_SCHEME",
+          "description": "purchase_url must use the https: protocol"
+        }
+      ]
+    }
+    ```
+
+    - `message` is always present. On a validation failure it is the first `details` entry's
+      `description`, suffixed with ` (+N more)` when the request has more than one violation.
+    - `request_id` mirrors the `SASHA-Request-ID` response header.
+    - `details` is present on validation failures only, and lists at most 20 violations. Each
+      entry names the offending `field` in request-body naming (`purchase_url`,
+      `allowed_publish_urls[2]`, `custom_fields["asset_id"].string_value`), a machine-readable
+      `reason`, and a human-readable `description` that never echoes the value you submitted.
+
+    Branch on `reason`, never on the text of `message` or `description`. The reason catalogue is
+    `REQUIRED`, `INVALID_TYPE`, `INVALID_FORMAT`, `UNSUPPORTED_SCHEME`, `FORBIDDEN_USERINFO`,
+    `FORBIDDEN_HOST`, `TOO_LONG`, `TOO_MANY`, `INVALID_CHARACTERS`, `UNKNOWN_VALUE`,
+    `NOT_ALLOWED_HERE`, `EXACTLY_ONE_REQUIRED`, `UNKNOWN_FIELD`, `EMPTY` and `INVALID_PATTERN`;
+    each value is documented on the `FieldViolation` schema. The set is closed, but it may be
+    extended with new reasons — treat a `reason` you do not recognise as a generic validation
+    failure rather than failing hard.
+
+    The `/oauth/token` endpoint is the exception: it returns the OAuth 2.0 error shape
+    (`error`, `error_description`, `error_uri`) defined by RFC 6749.
   contact:
     name: API Support
     email: support@sasha.eu
-  version: "1.1.1"
+  version: "1.4.0"
 
 externalDocs:
   description: SASHA Developer Portal
@@ -73,6 +126,8 @@ tags:
     description: Check if a SASHA Signature is present in an image
   - name: Job
     description: Job management
+  - name: Record
+    description: Manage Records attached to signatures
 
 paths:
   /oauth/token:
@@ -97,18 +152,27 @@ paths:
       responses:
         "200":
           description: Successful operation
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/GetTokenResponse"
         "400":
           description: Bad request
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/AuthErrorResponse"
         "401":
           description: Unauthorized
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
           content:
             application/json:
               schema:
@@ -139,12 +203,20 @@ paths:
           multipart/form-data:
             schema:
               $ref: "#/components/schemas/EmbedSignatureFromDataRequest"
+            encoding:
+              # The Record is an object, so it travels as a JSON-encoded string
+              # in its own form field rather than as nested bracket fields.
+              record:
+                contentType: application/json
       callbacks:
         jobStatusChanged:
           $ref: "#/components/callbacks/jobStatusChanged"
       responses:
         "200":
           description: Successful operation
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
           content:
             application/json:
               schema:
@@ -153,7 +225,7 @@ paths:
                 embedJobPending:
                   $ref: "#/components/examples/embedJobResponsePending"
         "400":
-          $ref: "#/components/responses/ErrorResponse"
+          $ref: "#/components/responses/ValidationErrorResponse"
         "401":
           $ref: "#/components/responses/UnauthorizedResponse"
         "403":
@@ -190,6 +262,9 @@ paths:
       responses:
         "200":
           description: Successful operation
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
           content:
             application/json:
               schema:
@@ -223,6 +298,9 @@ paths:
       responses:
         "200":
           description: Successful operation
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
           content:
             application/json:
               schema:
@@ -261,6 +339,9 @@ paths:
       responses:
         "200":
           description: Successful operation
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
           content:
             application/json:
               schema:
@@ -271,6 +352,202 @@ paths:
           $ref: "#/components/responses/UnauthorizedResponse"
         "403":
           $ref: "#/components/responses/UnauthorizedResponse"
+
+  /signature/{signature_id}/record:
+    parameters:
+      - name: signature_id
+        in: path
+        required: true
+        schema:
+          $ref: "#/components/schemas/SignatureID"
+        description: The SignatureID of the signature whose Record to manage
+    put:
+      tags:
+        - Record
+      summary: Put Record
+      description: |
+        Create or fully replace the Record attached to a signature.
+
+        This is a full-replace upsert: the stored Record becomes exactly the provided Record
+        (last write wins, no field merging). It may be called for any signature registered by
+        the partner, regardless of when the signature was registered.
+
+        A signature without a Record is treated as private.
+
+        Supports optimistic concurrency: pass the current `ETag` in an `If-Match` header to
+        make the write conditional; a stale precondition returns `412 Precondition Failed`.
+      operationId: PutSignatureRecord
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: The Record to store. Read-only fields are ignored.
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/Record"
+            examples:
+              restrictedRecord:
+                $ref: "#/components/examples/restrictedRecord"
+      responses:
+        "204":
+          description: The Record was stored
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
+        "400":
+          $ref: "#/components/responses/ValidationErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
+        "409":
+          description: The signature is revoked; its Record can no longer be modified.
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "412":
+          $ref: "#/components/responses/PreconditionFailedResponse"
+    patch:
+      tags:
+        - Record
+      summary: Patch Record
+      description: |
+        Partially update the Record attached to a signature using JSON Merge Patch (RFC 7386).
+
+        Fields present in the patch replace the stored value (arrays and objects are replaced
+        wholesale, not merged), fields set to `null` are cleared, and absent fields are left
+        unchanged. The patch applies against the currently attached Record (or an empty one
+        when none is attached), and the resulting Record must satisfy the same consistency
+        rules as a full replace; a contradictory result is rejected and the stored Record is
+        left unchanged.
+
+        Supports optimistic concurrency: pass the current `ETag` in an `If-Match` header to
+        make the write conditional; a stale precondition returns `412 Precondition Failed`.
+      operationId: PatchSignatureRecord
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      security:
+        - BearerAuth: []
+      requestBody:
+        description: The Record fields to change.
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              $ref: "#/components/schemas/RecordPatch"
+            examples:
+              patchRecordByline:
+                $ref: "#/components/examples/patchRecordByline"
+      responses:
+        "204":
+          description: The Record was updated
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
+        "400":
+          $ref: "#/components/responses/ValidationErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
+        "409":
+          description: The signature is revoked; its Record can no longer be modified.
+          headers:
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "412":
+          $ref: "#/components/responses/PreconditionFailedResponse"
+    get:
+      tags:
+        - Record
+      summary: Get Record
+      description: |
+        Get the Record attached to a signature.
+
+        Only the partner that registered the signature can read its Record; the full Record
+        is never returned via lookup.
+      operationId: GetSignatureRecord
+      security:
+        - BearerAuth: []
+      responses:
+        "200":
+          description: Successful operation
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Record"
+              examples:
+                restrictedRecord:
+                  $ref: "#/components/examples/restrictedRecordWithTimestamps"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
+    delete:
+      tags:
+        - Record
+      summary: Delete Record
+      description: |
+        Delete the Record attached to a signature.
+
+        Deleting a Record removes the attached metadata only; the signature itself remains
+        valid and reverts to the default "no Record = private" interpretation.
+
+        Deleting is idempotent: deleting a signature's Record when none is attached succeeds.
+
+        Supports optimistic concurrency: pass the current `ETag` in an `If-Match` header to
+        make the delete conditional; a stale precondition returns `412 Precondition Failed`.
+      operationId: DeleteSignatureRecord
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      security:
+        - BearerAuth: []
+      responses:
+        "204":
+          description: The Record was deleted (or no Record was attached)
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+            SASHA-Request-ID:
+              $ref: "#/components/headers/SASHA-Request-ID"
+        "400":
+          $ref: "#/components/responses/ErrorResponse"
+        "401":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "403":
+          $ref: "#/components/responses/UnauthorizedResponse"
+        "404":
+          $ref: "#/components/responses/NotFoundResponse"
+        "412":
+          $ref: "#/components/responses/PreconditionFailedResponse"
 
 components:
   securitySchemes:
@@ -288,21 +565,89 @@ components:
       scheme: bearer
       bearerFormat: JWT
       description: Bearer token obtained from `GetToken` endpoint
+  parameters:
+    IfMatch:
+      name: If-Match
+      in: header
+      required: false
+      description: |
+        Optimistic-concurrency precondition (a strong validator). Set it to the `ETag`
+        returned by a prior read or write of this Record — the signature's current
+        revision, e.g. `"5"`. When present, the write is applied only if the signature's
+        revision still matches; a stale precondition is rejected with `412 Precondition
+        Failed` and nothing is modified. Omit for last-write-wins.
+      schema:
+        type: string
+      example: '"5"'
+  headers:
+    ETag:
+      description: |
+        The signature's current revision as a strong validator, e.g. `"5"`. Pass it back
+        in an `If-Match` header on a later write to make that write conditional.
+      schema:
+        type: string
+      example: '"5"'
+    SASHA-Request-ID:
+      description: |
+        The identifier of this request, set on every response. Quote it when contacting
+        SASHA support: it is what joins your call to the server-side logs. On an error
+        response the same value is repeated in the payload's `request_id`.
+      schema:
+        type: string
+      example: "8f14e45f-ceea-467a-9f0b-2b3a2c5a7d61"
   responses:
-    ErrorResponse:
-      description: An error has occurred.
+    PreconditionFailedResponse:
+      description: |
+        The `If-Match` precondition did not match the signature's current revision;
+        the Record was not modified. Re-read the Record and retry with the new `ETag`.
+      headers:
+        SASHA-Request-ID:
+          $ref: "#/components/headers/SASHA-Request-ID"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/ErrorResponse"
+    ErrorResponse:
+      description: An error has occurred.
+      headers:
+        SASHA-Request-ID:
+          $ref: "#/components/headers/SASHA-Request-ID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    ValidationErrorResponse:
+      description: |
+        The request was rejected. A validation failure lists every offending field in
+        `details`; other failures carry `message` only.
+      headers:
+        SASHA-Request-ID:
+          $ref: "#/components/headers/SASHA-Request-ID"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+          examples:
+            singleViolation:
+              $ref: "#/components/examples/recordValidationErrorSingleViolation"
+            multipleViolations:
+              $ref: "#/components/examples/recordValidationErrorMultipleViolations"
+            embeddedRecordViolation:
+              $ref: "#/components/examples/embedRecordValidationError"
     UnauthorizedResponse:
       description: An authorization error has occurred.
+      headers:
+        SASHA-Request-ID:
+          $ref: "#/components/headers/SASHA-Request-ID"
       content:
         application/json:
           schema:
             $ref: "#/components/schemas/UnauthorizedResponse"
     NotFoundResponse:
       description: The requested resource was not found.
+      headers:
+        SASHA-Request-ID:
+          $ref: "#/components/headers/SASHA-Request-ID"
       content:
         application/json:
           schema:
@@ -461,6 +806,8 @@ components:
       value:
         media_url: "https://example.com/image.jpg"
         media_mime_type: "image/jpeg"
+        publish_url: "https://news.example.com/articles/123"
+        source_url: "https://cdn.example.com/images/abc.jpg"
         callback_secret_id: "177F01DA-34F2-4318-9763-B73876FDD7FA"
         callback_url: "https://your-app.com/callbacks/sasha-job-update"
     embedJobPending:
@@ -516,6 +863,10 @@ components:
         status: "completed"
         signature_id: "12345678901234567890"
         creator_id: 1234567890
+        guidance:
+          share_state: "restricted"
+          advice: "not_allowed"
+          message: "Only allowed on news.example.com"
         created_at: "2025-01-01T00:00:00Z"
         updated_at: "2025-01-01T00:00:00Z"
     embedJobFailed:
@@ -540,6 +891,72 @@ components:
           message: "Unsupported image format"
         created_at: "2025-01-01T00:00:00Z"
         updated_at: "2025-01-01T00:00:00Z"
+    restrictedRecord:
+      summary: Record restricting the media to a publisher with an embargo
+      value:
+        share_state: "restricted"
+        allowed_publish_urls:
+          - "https://news.example.com/articles/"
+        allowed_source_urls:
+          - "https://cdn.example.com"
+        allowed_from: "2026-07-01T06:00:00Z"
+        byline: "Photo by Jane Doe"
+        purchase_url: "https://license.example.com/photos/123"
+    patchRecordByline:
+      summary: Update only the byline, leaving other fields unchanged
+      value:
+        byline: "Photo by Jane Doe / Example Agency"
+    restrictedRecordWithTimestamps:
+      summary: Stored Record including server-set timestamps
+      value:
+        share_state: "restricted"
+        allowed_publish_urls:
+          - "https://news.example.com/articles/"
+        allowed_source_urls:
+          - "https://cdn.example.com"
+        allowed_from: "2026-07-01T06:00:00Z"
+        byline: "Photo by Jane Doe"
+        purchase_url: "https://license.example.com/photos/123"
+        custom_fields:
+          internal_asset_id:
+            string_value: "asset-9f3c"
+          is_exclusive:
+            boolean_value: true
+        created_at: "2026-06-15T10:00:00Z"
+        updated_at: "2026-06-20T08:30:00Z"
+    recordValidationErrorSingleViolation:
+      summary: Record write rejected because purchase_url is not an https URL
+      value:
+        message: "purchase_url must use the https: protocol"
+        request_id: "8f14e45f-ceea-467a-9f0b-2b3a2c5a7d61"
+        details:
+          - field: "purchase_url"
+            reason: "UNSUPPORTED_SCHEME"
+            description: "purchase_url must use the https: protocol"
+    recordValidationErrorMultipleViolations:
+      summary: Record write rejected for several fields at once
+      value:
+        message: "purchase_url must use the https: protocol (+2 more)"
+        request_id: "2c3f9b7d-5a41-4a53-8f2e-9b7a1c0d4e62"
+        details:
+          - field: "purchase_url"
+            reason: "UNSUPPORTED_SCHEME"
+            description: "purchase_url must use the https: protocol"
+          - field: "allowed_publish_urls[1]"
+            reason: "INVALID_PATTERN"
+            description: "allowed_publish_urls[1]: wildcard is only allowed as the leftmost label"
+          - field: "purchaseUrl"
+            reason: "UNKNOWN_FIELD"
+            description: "purchaseUrl is not a field of Record; Record fields use snake_case names"
+    embedRecordValidationError:
+      summary: Embed request rejected because the Record it carries is invalid
+      value:
+        message: "record.purchase_url must use the https: protocol"
+        request_id: "5d1a6c22-8e3f-4b19-9d77-0f4c6a2b8e13"
+        details:
+          - field: "record.purchase_url"
+            reason: "UNSUPPORTED_SCHEME"
+            description: "record.purchase_url must use the https: protocol"
 
   schemas:
     AuthErrorResponse:
@@ -597,9 +1014,109 @@ components:
       type: object
       required:
         - message
+      description: |
+        The error payload returned by the Signature, Job and Record endpoints.
+
+        `message` is always present. `request_id` and `details` are added when available, so a
+        client that reads `message` only keeps working unchanged.
       properties:
         message:
           type: string
+          description: |
+            Human-readable summary of the failure.
+
+            On a validation failure this is the first `details` entry's `description`, suffixed
+            with ` (+N more)` when the request has more than one violation. English, not
+            localized, and the wording is not stable across releases — never parse or branch on
+            it; branch on `details[].reason` instead.
+          examples:
+            - "purchase_url must use the https: protocol (+2 more)"
+        request_id:
+          type: string
+          description: |
+            The identifier of the request that failed, mirroring the `SASHA-Request-ID`
+            response header. Quote it when contacting SASHA support: it is what joins your
+            call to the server-side logs.
+          examples:
+            - "8f14e45f-ceea-467a-9f0b-2b3a2c5a7d61"
+        details:
+          type: array
+          maxItems: 20
+          items:
+            $ref: "#/components/schemas/FieldViolation"
+          description: |
+            The field violations that caused the request to be rejected.
+
+            Present on validation failures only; absent on every other kind of error. A request
+            with more than 20 violations reports the first 20.
+
+    FieldViolation:
+      type: object
+      required:
+        - field
+        - reason
+        - description
+      description: |
+        A single field of the request that was rejected, and why.
+      properties:
+        field:
+          type: string
+          description: |
+            Path of the offending field, in request-body naming. Array entries are indexed and
+            map entries are keyed, e.g. `purchase_url`, `allowed_publish_urls[2]`,
+            `custom_fields["asset_id"].string_value`.
+          examples:
+            - "allowed_publish_urls[2]"
+        reason:
+          type: string
+          description: |
+            Machine-readable cause of the violation — the value to branch on:
+            * `REQUIRED`: A field the request cannot omit was not provided
+            * `INVALID_TYPE`: The value has the wrong JSON type for the field
+            * `INVALID_FORMAT`: The value has the right type but is not well-formed for the field, e.g. an unparsable URL or timestamp, or a fixed-length value of the wrong length
+            * `UNSUPPORTED_SCHEME`: A URL uses a scheme the field does not accept (only `https` is accepted)
+            * `FORBIDDEN_USERINFO`: A URL carries userinfo (`user:password@`), which is never accepted
+            * `FORBIDDEN_HOST`: A URL points at a host the field does not accept, such as an IP literal or localhost
+            * `TOO_LONG`: The value is longer than the field allows
+            * `TOO_MANY`: The list or map holds more entries than the field allows
+            * `INVALID_CHARACTERS`: The value contains characters the field does not accept, such as control characters
+            * `UNKNOWN_VALUE`: The value is not one of the values the field defines, e.g. an unknown `share_state`
+            * `NOT_ALLOWED_HERE`: The field is well-formed but not allowed in this combination, e.g. a distribution field on a `private` Record
+            * `EXACTLY_ONE_REQUIRED`: Exactly one of a group of mutually exclusive properties must be set, e.g. the typed value of a `custom_fields` entry
+            * `UNKNOWN_FIELD`: The body carries a field the endpoint does not define — commonly a misspelling, or a camelCase spelling of a snake_case field
+            * `EMPTY`: The value is present but empty where a value is required
+            * `INVALID_PATTERN`: A URL pattern is malformed and cannot be interpreted
+
+            The set is closed, but it may be extended with new reasons. Treat a `reason` you do
+            not recognise as a generic validation failure rather than failing hard.
+          enum:
+            - "REQUIRED"
+            - "INVALID_TYPE"
+            - "INVALID_FORMAT"
+            - "UNSUPPORTED_SCHEME"
+            - "FORBIDDEN_USERINFO"
+            - "FORBIDDEN_HOST"
+            - "TOO_LONG"
+            - "TOO_MANY"
+            - "INVALID_CHARACTERS"
+            - "UNKNOWN_VALUE"
+            - "NOT_ALLOWED_HERE"
+            - "EXACTLY_ONE_REQUIRED"
+            - "UNKNOWN_FIELD"
+            - "EMPTY"
+            - "INVALID_PATTERN"
+          examples:
+            - "UNSUPPORTED_SCHEME"
+        description:
+          type: string
+          description: |
+            Human-readable explanation of this violation, safe to log and to show to a developer.
+
+            It may name the offending field or map key and state the limit that applies, but it
+            never echoes the value that was submitted. English, not localized, and the wording is
+            not stable across releases — never parse or branch on it.
+          examples:
+            - "purchase_url must use the https: protocol"
 
     UnauthorizedResponse:
       type: object
@@ -670,9 +1187,13 @@ components:
 
             If not provided, the MIME type will be inferred from the URL.
 
-            The following MIME types are supported:
+            The following MIME types are currently supported:
             - `image/jpeg`
             - `image/png`
+            - `image/webp`
+
+            For the most up-to-date list of supported formats and other
+            media constraints, see the [Supported Formats reference](https://developer.sasha.eu/partner-api/api-reference/supported-formats).
           examples:
             - "image/jpeg"
         callback_secret_id:
@@ -699,6 +1220,14 @@ components:
           description: Optional callback URL to receive job status notifications
           examples:
             - "https://your-app.com/callbacks/sasha-job-update"
+        record:
+          $ref: "#/components/schemas/Record"
+          description: |
+            Optional Record to attach to the resulting signature, carrying the
+            creator's declared distribution intent and display metadata.
+
+            Validated at submit: an invalid Record fails the request with a `400`
+            and creates no job. Read-only fields are ignored.
 
     EmbedSignatureFromDataRequest:
       type: object
@@ -737,6 +1266,17 @@ components:
           description: Optional callback URL to receive job status notifications
           examples:
             - "https://your-app.com/callbacks/sasha-job-update"
+        record:
+          $ref: "#/components/schemas/Record"
+          description: |
+            Optional Record to attach to the resulting signature, carrying the
+            creator's declared distribution intent and display metadata.
+
+            Send it as a JSON-encoded string in a `record` form field with
+            content type `application/json`, not as nested bracket fields.
+
+            Validated at submit: an invalid Record fails the request with a `400`
+            and creates no job. Read-only fields are ignored.
 
     EmbedSignatureResponse:
       type: object
@@ -787,12 +1327,33 @@ components:
             Will be `null` if no signature was found in the image.
         creator_id:
           type: integer
-          description: The creator ID of the signature (populated when job `status` is `completed` and `type` is `lookup-signature`)
+          description: |
+            The Creator ID of the business entity that owns the found signature (populated when job
+            `status` is `completed`, `type` is `lookup-signature`, and a signature was found — that
+            is, exactly when `signature_id` is populated). A lookup never reports a signature
+            without its creator.
           format: uint32
           minimum: 0
           maximum: 4294967295
           examples:
             - 1234567890
+        guidance:
+          $ref: "#/components/schemas/Guidance"
+          description: |
+            SASHA-evaluated distribution guidance for the found signature (populated when job
+            `status` is `completed`, `type` is `lookup-signature`, and an active signature was
+            found). A signature without a Record yields guidance with the `private` share state.
+        record:
+          $ref: "#/components/schemas/Record"
+          description: |
+            A field-filtered Record for the found signature. Populated only when job `status` is
+            `completed`, `type` is `lookup-signature`, an active signature was found, and the
+            partner is the owning creator (full Record) or has been granted access (granted fields
+            only). Absent for all other lookers and never present for revoked signatures.
+
+            Availability is time-bounded: the disclosed Record is retained for a limited window
+            after completion, so it may be absent on jobs fetched later even though `guidance`
+            remains. Use `GET /signature/{signature_id}/record` for durable read-back of a Record you own.
         created_at:
           type: string
           format: date-time
@@ -856,6 +1417,230 @@ components:
       examples:
         - "12345678901234567890"
 
+    ShareState:
+      type: string
+      enum:
+        - "private"
+        - "unrestricted"
+        - "restricted"
+      description: |
+        The creator-declared share state of a protected media item:
+        * `private`: The creator declared that the media is not intended to be distributed anywhere public
+        * `unrestricted`: The creator declared no distribution restrictions for the media
+        * `restricted`: The creator declared that the media is intended to be distributed only where the Record's distribution fields permit
+
+        A share state describes only the intent the creator has declared to SASHA. It is not a
+        statement about the legal status of the media; rights such as copyright apply independently.
+
+    Record:
+      allOf:
+        - $ref: "#/components/schemas/RecordFields"
+      required:
+        - share_state
+      description: |
+        A Record attaches creator-declared distribution intent and display metadata to a signature.
+
+        A lookup always returns coarse `guidance` (evaluated server-side). It may additionally
+        return a field-filtered Record: the owning partner receives the full Record, a partner the
+        owner has granted access to receives only the granted fields, and all other lookers receive
+        no Record. The full Record is always readable by its owning partner via `GET /signature/{signature_id}/record`.
+
+        Consistency rules (enforced on write):
+        * `share_state` must be set
+        * `private` and `unrestricted` Records must not carry any distribution fields
+        * `restricted` Records may carry any subset of the distribution fields (`allowed_publish_urls`, `allowed_source_urls`, `allowed_from`, `allowed_to`), including none — the fields form a permit list, so a restricted Record with none of them permits no locations yet and conditions can be added later as they become known
+        * `custom_fields` are display/metadata only and may be set under any share state
+
+        Contradictory combinations are rejected.
+
+        Size limits (enforced on write): at most 100 patterns per URL-pattern list, each at most
+        2048 characters; at most 32 `custom_fields` entries with keys of 1-64 characters and
+        string values of at most 1024 characters; a Record without `c2pa_manifest_store` must not
+        exceed 64 KiB when serialized.
+
+    RecordPatch:
+      allOf:
+        - $ref: "#/components/schemas/RecordFields"
+      description: |
+        A JSON Merge Patch (RFC 7386) for a Record: fields present in the patch replace the
+        stored value (arrays and objects are replaced wholesale, not merged), fields set to
+        `null` are cleared, and absent fields are left unchanged. The result must satisfy the
+        Record consistency rules. Read-only fields are ignored.
+
+    RecordFields:
+      type: object
+      properties:
+        share_state:
+          $ref: "#/components/schemas/ShareState"
+        allowed_publish_urls:
+          type: array
+          items:
+            type: string
+          description: |
+            URL patterns the browser-facing display URL of the media is allowed to match
+            (only meaningful with the `restricted` share state).
+
+            Pattern syntax:
+
+            * `https` only. The scheme may be omitted; `https` is implied.
+            * A host with no path matches any path on that host: `https://cdn.example.com`.
+            * A path ending in `/` matches that prefix: `https://news.example.com/articles/`
+              matches `/articles/123` but not `/archive/9`. A path not ending in `/` must match
+              exactly.
+            * `*.` is a subdomain wildcard, and is only allowed as the leftmost label:
+              `https://*.example.com`. It cannot appear elsewhere, so `https://example.com/*`
+              is not a valid pattern — omit the path instead. The base of a wildcard must have
+              at least two labels and must not be a public suffix.
+            * No userinfo, no query string, no fragment, no IP literals, no `localhost`.
+
+            A pattern that does not parse is rejected with an `INVALID_PATTERN` field violation
+            naming the entry, e.g. `allowed_publish_urls[1]`.
+          examples:
+            - ["https://news.example.com/articles/"]
+        allowed_source_urls:
+          type: array
+          items:
+            type: string
+          description: |
+            URL patterns the storage/CDN address of the media bytes is allowed to match
+            (only meaningful with the `restricted` share state).
+
+            Same pattern syntax as `allowed_publish_urls`.
+          examples:
+            - ["https://cdn.example.com"]
+        allowed_from:
+          type: string
+          format: date-time
+          description: The media is not allowed to be available before this time (supports embargo dates)
+        allowed_to:
+          type: string
+          format: date-time
+          description: The media is not allowed to be available after this time
+        byline:
+          type: string
+          maxLength: 256
+          description: |
+            Display text the publisher is expected to show alongside the media (e.g. photographer credit).
+
+            Plain text, no control characters. Consumers must always treat this value as text, never as markup.
+          examples:
+            - "Photo by Jane Doe"
+        purchase_url:
+          type: string
+          format: uri
+          maxLength: 2048
+          description: |
+            URL where the media can be purchased or licensed.
+
+            Must be a well-formed https URL without userinfo, and must not point at an IP literal or localhost.
+          examples:
+            - "https://license.example.com/photos/123"
+        licensee:
+          type: string
+          maxLength: 256
+          description: |
+            Legal business name of the entity that has licensed the media asset. Aids enforcers when
+            the licence agreement is not bound to a specific location.
+
+            Plain text, no control characters. Consumers must always treat this value as text, never as markup.
+          examples:
+            - "Example Media Group Ltd."
+        asset_source_id:
+          type: string
+          maxLength: 256
+          description: |
+            The creator's own upstream source ID for the asset: the creator's identifier for the media
+            in their own system.
+
+            Opaque text, no control characters. A UUID (RFC 9562) is recommended but not required.
+            Consumers must always treat this value as text, never as markup.
+          examples:
+            - "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d"
+        custom_fields:
+          type: object
+          additionalProperties:
+            $ref: "#/components/schemas/FieldValue"
+          description: |
+            Custom fields, keyed by a creator-chosen name. Custom fields are
+            display/metadata only: they never participate in distribution guidance evaluation, so
+            they may be set under any share state. Disclosure to other parties is governed by the
+            creator's record-access policy (managed by SASHA on the creator's behalf).
+        created_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: The date and time the Record was first created
+        updated_at:
+          type: string
+          format: date-time
+          readOnly: true
+          description: The date and time the Record was last replaced
+
+    FieldValue:
+      type: object
+      minProperties: 1
+      maxProperties: 1
+      description: |
+        A typed value for a custom Record field. Exactly one property is set, which
+        pins the value's type. Custom fields are display/metadata only and never participate in
+        distribution guidance evaluation.
+      properties:
+        boolean_value:
+          type: boolean
+        string_value:
+          type: string
+        int32_value:
+          type: integer
+          format: int32
+        double_value:
+          type: number
+          format: double
+        uuid_value:
+          type: string
+          format: byte
+          description: A UUID per RFC 9562 as its 16 raw bytes, base64-encoded.
+
+    Guidance:
+      type: object
+      required:
+        - share_state
+        - advice
+      description: |
+        SASHA-evaluated distribution guidance for a found signature.
+
+        Guidance reflects the distribution intent the creator declared to SASHA. It is not a
+        determination of the legal status of the media; rights such as copyright apply
+        independently of the returned advice. The underlying Record contents are never disclosed,
+        though the optional `message` may name domains from the Record's allowed URL patterns
+        (domain names are public knowledge).
+      properties:
+        share_state:
+          $ref: "#/components/schemas/ShareState"
+        advice:
+          type: string
+          enum:
+            - "allowed"
+            - "not_allowed"
+            - "inconclusive"
+          description: |
+            The verdict for the queried location and time:
+            * `allowed`: Presence of the media at the queried location at the current time is consistent with the creator's declared distribution intent
+            * `not_allowed`: Presence of the media at the queried location at the current time conflicts with the creator's declared distribution intent, or the creator declared the media as not intended for public distribution
+            * `inconclusive`: No conclusive verdict could be produced, typically because the share state is `restricted` and no `publish_url` or `source_url` was supplied with the lookup
+        message:
+          type: string
+          description: |
+            Human-readable explanation of the verdict, e.g. "Only allowed on example.com".
+
+            Populated at the server's discretion, typically when `advice` is `not_allowed` or
+            `inconclusive`. For developer convenience only: English, not localized, and the
+            wording is not stable across releases — never parse or branch on it; use `advice` and
+            `share_state` for program logic. The text may name domains from the Record's allowed
+            URL patterns (domain names are public knowledge and are not masked); it never carries
+            full URL patterns or other raw Record content.
+          examples:
+            - "Only allowed on news.example.com"
+
     LookupSignatureFromURLRequest:
       type: object
       required:
@@ -866,6 +1651,25 @@ components:
           description: The URL of the media file to lookup the SASHA Signature from
           examples:
             - "https://example.com/image.jpg"
+        publish_url:
+          type: string
+          description: |
+            The browser-facing URL where the media is displayed or is about to be published.
+
+            Used to evaluate the found signature's Record into distribution guidance on the
+            completed job. Strongly recommended: without URL context, restricted media yields
+            an inconclusive verdict.
+          examples:
+            - "https://news.example.com/articles/123"
+        source_url:
+          type: string
+          description: |
+            The URL the media bytes were fetched from (e.g. a CDN address).
+
+            Used to evaluate the found signature's Record into distribution guidance on the
+            completed job.
+          examples:
+            - "https://cdn.example.com/images/abc.jpg"
         media_mime_type:
           type: string
           description: |
@@ -873,9 +1677,13 @@ components:
 
             If not provided, the MIME type will be inferred from the URL.
 
-            The following MIME types are supported:
+            The following MIME types are currently supported:
             - `image/jpeg`
             - `image/png`
+            - `image/webp`
+
+            For the most up-to-date list of supported formats and other
+            media constraints, see the [Supported Formats reference](https://developer.sasha.eu/partner-api/api-reference/supported-formats).
           examples:
             - "image/jpeg"
         callback_secret_id:
@@ -916,6 +1724,25 @@ components:
           format: binary
           contentMediaType: application/octet-stream
           description: The media file to lookup the SASHA Signature from
+        publish_url:
+          type: string
+          description: |
+            The browser-facing URL where the media is displayed or is about to be published.
+
+            Used to evaluate the found signature's Record into distribution guidance on the
+            completed job. Strongly recommended: without URL context, restricted media yields
+            an inconclusive verdict.
+          examples:
+            - "https://news.example.com/articles/123"
+        source_url:
+          type: string
+          description: |
+            The URL the media bytes were fetched from (e.g. a CDN address).
+
+            Used to evaluate the found signature's Record into distribution guidance on the
+            completed job.
+          examples:
+            - "https://cdn.example.com/images/abc.jpg"
         callback_secret_id:
           type: string
           description: |

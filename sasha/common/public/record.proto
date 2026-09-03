@@ -1,0 +1,160 @@
+// Copyright 2026 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.common.public;
+
+option java_package = "eu.sasha.common.pub";
+option java_multiple_files = true;
+option java_outer_classname = "RecordProto";
+
+import "google/protobuf/timestamp.proto";
+import "google/protobuf/wrappers.proto";
+import "sasha/common/public/share_state.proto";
+import "sasha/common/public/field_value.proto";
+
+// A Record attaches creator-declared distribution intent, display metadata,
+// and content provenance (a C2PA manifest store) to a signature.
+//
+// # Visibility
+//
+// A lookup always returns coarse `Guidance` (evaluated server-side). It may
+// additionally return a field-filtered Record. Fields are private by default;
+// disclosure has four tiers: the owning creator receives the full Record, a
+// creator the owner has granted access to receives the granted fields, any
+// field the owner has marked public is returned to every looker, and a looker
+// with neither a grant nor a public field receives no Record. The full Record
+// is always readable by its owning creator (see `GetSignatureRecord`).
+//
+// Marking a field public is a deliberate, per-field opt-in and is effectively
+// irreversible: once a value is returned to an arbitrary looker it is out,
+// though the owner can stop disclosing it going forward.
+//
+// # Consistency rules (enforced on write)
+//
+// - `share_state` must be set and must not be `SHARE_STATE_UNSPECIFIED`.
+// - `SHARE_STATE_UNRESTRICTED` and `SHARE_STATE_PRIVATE` must not carry any
+//   distribution fields.
+// - `SHARE_STATE_RESTRICTED` may carry any subset of the distribution
+//   fields, including none. The fields form a permit list: with none present
+//   the Record permits no locations yet, so a creator can declare the
+//   restriction first and add the conditions as they become known
+//   (progressive disclosure).
+// - Every `custom_fields` key must be one the creator may currently write:
+//   declared in the creator's record-access policy, still open for writing,
+//   and with the declared type matching the supplied value kind.
+//
+// Contradictory combinations are rejected with `INVALID_ARGUMENT`; there are
+// no precedence rules.
+//
+// # Size limits (enforced on write)
+//
+// - `allowed_publish_urls` / `allowed_source_urls`: at most 100 patterns
+//   each, each pattern at most 2048 characters.
+// - `custom_fields`: at most 32 entries; keys 1-64 characters;
+//   `string_value` at most 1024 characters.
+// - `licensee` / `asset_source_id`: at most 256 characters each.
+// - A Record serialized without `c2pa_manifest_store` must not exceed
+//   64 KiB (the manifest store has its own 256 KiB limit).
+//
+// Writes exceeding a limit are rejected with `INVALID_ARGUMENT`.
+message Record {
+  // Required. The creator-declared share state of the media.
+  ShareState share_state = 1;
+
+  // Optional. URL patterns the browser-facing display URL of the media is
+  // allowed to match (only meaningful with `SHARE_STATE_RESTRICTED`).
+  //
+  // The distribution fields form a permit list: every condition present must
+  // hold for the media to be allowed at a location, and when none are
+  // present the Record permits no locations.
+  //
+  // Pattern syntax is defined by the SASHA URL matching specification.
+  repeated string allowed_publish_urls = 2;
+
+  // Optional. URL patterns the storage/CDN address of the media bytes is
+  // allowed to match (only meaningful with `SHARE_STATE_RESTRICTED`).
+  //
+  // Pattern syntax is defined by the SASHA URL matching specification.
+  repeated string allowed_source_urls = 3;
+
+  // Optional. The media is not allowed to be available before this time
+  // (supports embargo dates). Only meaningful with `SHARE_STATE_RESTRICTED`.
+  google.protobuf.Timestamp allowed_from = 4;
+
+  // Optional. The media is not allowed to be available after this time.
+  // Only meaningful with `SHARE_STATE_RESTRICTED`.
+  google.protobuf.Timestamp allowed_to = 5;
+
+  // Optional. Display text the publisher is expected to show alongside the
+  // media (e.g. photographer credit).
+  //
+  // Plain text, at most 256 characters, no control characters. Consumers
+  // must always treat this value as text, never as markup.
+  google.protobuf.StringValue byline = 6;
+
+  // Optional. URL where the media can be purchased or licensed.
+  //
+  // Must be a well-formed https URL of at most 2048 characters, without
+  // userinfo, and must not point at an IP literal or localhost.
+  google.protobuf.StringValue purchase_url = 7;
+
+  // Optional. Legal business name of the entity that has licensed the media
+  // asset (e.g. "Example Media Group Ltd."). Aids enforcers when the licence
+  // agreement is not bound to a specific location.
+  //
+  // Plain text, at most 256 characters, no control characters. Consumers
+  // must always treat this value as text, never as markup.
+  google.protobuf.StringValue licensee = 12;
+
+  // Optional. The creator's own upstream source ID for the asset: the
+  // creator's identifier for the media in their own system (e.g.
+  // "a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d").
+  //
+  // Opaque text, at most 256 characters, no control characters. A UUID
+  // (RFC 9562) is recommended but not required. Consumers must always treat
+  // this value as text, never as markup.
+  google.protobuf.StringValue asset_source_id = 13;
+
+  // Optional. Custom fields, keyed by a creator-chosen name.
+  //
+  // Each key must be declared in the creator's record-access policy before it
+  // can be written, and the value kind supplied here must match the type
+  // declared for that key. A write naming a key that is undeclared, or that
+  // was declared and has since been withdrawn from writing, or supplying a
+  // mismatched kind, is rejected with `INVALID_ARGUMENT`; the rejection names
+  // the keys the creator may currently write. The declarations are maintained
+  // by SASHA on the creator's behalf, so a field is declared once and then
+  // carries the same type across all of the creator's Records.
+  //
+  // A key can be withdrawn from writing, or redeclared with a different type,
+  // after Records have already been written with it. Those Records are left
+  // as they are: their values stay stored and are disclosed exactly as
+  // before. Only further writes of the key are refused, so a write that
+  // replaces the whole Record is rejected while it still carries a value the
+  // creator may no longer write, and succeeds once that value is dropped from
+  // it. An update that does not touch `custom_fields` carries the stored
+  // values through untouched.
+  //
+  // Custom fields are display/metadata only: they never participate in
+  // distribution guidance evaluation, so they may be set under any
+  // `share_state`. Disclosure to other parties is governed by the same
+  // record-access policy.
+  map<string, FieldValue> custom_fields = 10;
+
+  // Optional. The signed C2PA manifest store persisted for the signature, as
+  // serialized C2PA manifest-store (JUMBF) bytes.
+  //
+  // Set it at commit (inside `CommitSignatureRequest.record`) or afterwards
+  // via `UpdateSignatureRecord` — either by replacing the whole `record` or
+  // by naming `record.c2pa_manifest_store` in the field mask. See
+  // `UpdateSignatureRecord` for the validation rules applied whenever a
+  // manifest store is stored. The media itself is never included.
+  google.protobuf.BytesValue c2pa_manifest_store = 11;
+
+  // Output only. The time the Record was first created. Ignored on write.
+  google.protobuf.Timestamp created_at = 8;
+
+  // Output only. The time the Record was last replaced. Ignored on write.
+  google.protobuf.Timestamp updated_at = 9;
+}

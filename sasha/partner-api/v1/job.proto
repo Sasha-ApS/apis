@@ -7,6 +7,8 @@ package sasha.partnerapi.v1;
 import "google/protobuf/timestamp.proto";
 import "google/protobuf/wrappers.proto";
 
+import "sasha/common/public/guidance.proto";
+import "sasha/common/public/record.proto";
 import "sasha/common/public/signature_id.proto";
 
 message Job {
@@ -108,11 +110,39 @@ message Job {
   // this field is not populated.
   sasha.common.public.SignatureID signature_id = 7;
 
-  // Optional. The creator ID of the signature, if the lookup job is completed.
+  // Optional. The Creator ID of the business entity that owns the found
+  // signature.
   //
-  // This is only populated if the job is completed and the job type is
-  // `TYPE_LOOKUP_SIGNATURE`.
+  // This is only populated if the job is completed, the job type is
+  // `TYPE_LOOKUP_SIGNATURE`, and a signature was found — that is, exactly when
+  // `signature_id` is populated. A lookup never reports a signature without its
+  // creator.
   google.protobuf.UInt32Value creator_id = 10;
+
+  // Optional. SASHA-evaluated distribution guidance for the found signature.
+  //
+  // This is only populated if the job is completed, the job type is
+  // `TYPE_LOOKUP_SIGNATURE`, and an active signature was found. A signature
+  // without a Record yields guidance with `SHARE_STATE_PRIVATE`. See
+  // `sasha.common.public.Guidance` for the (coarse) guidance
+  // values. A field-filtered Record may additionally be returned in the
+  // `record` field when the looker is authorized; see that field.
+  sasha.common.public.Guidance guidance = 11;
+
+  // Optional. A field-filtered Record for the found signature on a completed
+  // lookup job.
+  //
+  // Populated only when the signature is found and active, and the partner
+  // that submitted the job is the owning creator (full Record) or has been
+  // granted access (granted fields only). Absent for all other lookers.
+  // Only populated for `TYPE_LOOKUP_SIGNATURE` jobs. Never present for revoked
+  // signatures.
+  //
+  // Availability is time-bounded: the disclosed Record is held in a transient
+  // store for a limited window after completion, so it may be absent on jobs
+  // fetched later even though `guidance` remains. The owning creator can read
+  // its full Record durably via `GetSignatureRecord`.
+  sasha.common.public.Record record = 12;
 
   // Required. The date and time the job was created.
   google.protobuf.Timestamp created_at = 8;

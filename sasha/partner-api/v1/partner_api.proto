@@ -4,8 +4,12 @@ syntax = "proto3";
 
 package sasha.partnerapi.v1;
 
+import "google/protobuf/field_mask.proto";
 import "google/protobuf/wrappers.proto";
 
+import "sasha/common/public/guidance_context.proto";
+import "sasha/common/public/record.proto";
+import "sasha/common/public/signature_id.proto";
 import "sasha/partner-api/v1/job.proto";
 
 // Service for Partners working with SASHA Signature.
@@ -40,6 +44,56 @@ import "sasha/partner-api/v1/job.proto";
 // - **Other authorization issues**
 //   The service may return an "UNAUTHENTICATED" status code for other
 //   authorization issues.
+//
+// ## Validation failures
+//
+// An `INVALID_ARGUMENT` caused by field validation also carries the rejected
+// fields as a `google.rpc.BadRequest` in the standard `grpc-status-details-bin`
+// trailer (see `google/rpc/error_details.proto`), which mainstream gRPC
+// libraries decode for you.
+//
+// Each `BadRequest.field_violations` entry names one rejected field:
+//
+// - `field`
+//   Path of the offending field, in proto field naming, rooted at the request.
+//   Repeated entries are indexed and map entries are keyed, e.g.
+//   `record.purchase_url`, `record.allowed_publish_urls[2]`,
+//   `record.custom_fields["asset_id"].string_value`.
+//
+// - `reason`
+//   Machine-readable cause, and the only part of a violation to branch on. One
+//   of `INVALID_FORMAT`, `UNSUPPORTED_SCHEME`, `FORBIDDEN_USERINFO`,
+//   `FORBIDDEN_HOST`, `TOO_LONG`, `TOO_MANY`, `INVALID_CHARACTERS`,
+//   `UNKNOWN_VALUE`, `NOT_ALLOWED_HERE`, `EXACTLY_ONE_REQUIRED`, `EMPTY` or
+//   `INVALID_PATTERN`. The set is closed but may be extended, so treat an
+//   unrecognized value as a generic validation failure rather than failing
+//   hard. What each value means is documented at
+//   https://developer.sasha.eu/partner-api/concepts/error-handling.
+//
+// - `description`
+//   Human-readable explanation of that one violation. English, not localized,
+//   and the wording is not stable across releases. It never echoes the
+//   submitted value, so it is safe to log.
+//
+// At most 20 violations are reported. The status message remains the fallback
+// for a client that does not read the trailer: it is the first violation's
+// `description`, suffixed with " (+N more)" when the request has more than one
+// violation, counted over all violations rather than only the reported ones.
+//
+// Violations are reported this way for the Record submitted with
+// `EmbedSignatureFromURL`, `EmbedSignatureFromData` and
+// `UpdateSignatureRecord`. They are not a guarantee on every
+// `INVALID_ARGUMENT`: a rejection that is not about a named Record field —
+// an unsupported `c2pa_manifest_store`, an `update_mask` path that is unknown
+// or immutable, or a rule an update can only be judged against once merged
+// with the stored Record — carries the status message alone. Read the details
+// when they are present rather than requiring them.
+//
+// `field`, `reason` and `description` carry the same values as the REST
+// surface's `ErrorResponse.details`, so an integration that uses both surfaces
+// branches on one vocabulary. That vocabulary holds three further reasons —
+// `REQUIRED`, `INVALID_TYPE` and `UNKNOWN_FIELD` — which describe request-body
+// problems that cannot arise on a typed gRPC request.
 service PartnerAPI {
   // ----------------------------------------------------------------------------
   // Authentication
@@ -91,6 +145,75 @@ service PartnerAPI {
   // passed in the "Authorization" metadata with the format `Bearer <token>`.
   rpc LookupSignatureFromData(stream LookupSignatureFromDataRequest)
       returns (LookupSignatureFromDataResponse) {}
+
+  // ----------------------------------------------------------------------------
+  // Signature Management
+  // ----------------------------------------------------------------------------
+
+  // Returns the Record attached to a signature registered by the calling
+  // partner, along with the signature's current revision.
+  //
+  // A signature with no Record attached is returned with `record` unset (it
+  // is not a `NOT_FOUND`). "Signature does not exist" and "not registered by
+  // the calling partner" both return a uniform `NOT_FOUND`, so this cannot be
+  // used as an existence oracle over other partners' signatures. A
+  // field-filtered Record may also be returned via a lookup job to the owning
+  // partner or an authorized grantee. To change the Record, use
+  // `UpdateSignatureRecord`.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  // Requires the same partner permission as submitting embed jobs.
+  rpc GetSignatureRecord(GetSignatureRecordRequest)
+      returns (GetSignatureRecordResponse) {
+    option idempotency_level = NO_SIDE_EFFECTS;
+  }
+
+  // Replaces the Record attached to a Signature and returns the signature's
+  // new revision (and, when `return_record` is set, the updated Record).
+  //
+  // Only parts named in `update_mask` are changed; each named part is
+  // replaced wholesale (no sub-field merging). Naming `record` in the mask
+  // with its value left unset detaches the Record from the signature (metadata
+  // only; the signature remains valid and reverts to the default
+  // "no Record = private" interpretation). May be called for any signature the
+  // partner has registered, regardless of when it was registered. Idempotent:
+  // replaying the same patch is a no-op beyond the revision bump.
+  //
+  // Supported mask paths: `record` and `record.<field>` for any top-level
+  // Record field except `c2pa_manifest_store` (replaces only the named
+  // fields; repeated and map fields are replaced wholesale; a path named with
+  // its value unset clears that field). Sub-field updates apply against the
+  // currently attached Record (or an empty one when none is attached), and
+  // the resulting Record must satisfy the consistency rules.
+  //
+  // The Record's `c2pa_manifest_store` field is not supported on this surface
+  // and must be left unset; storing a C2PA manifest store is done via the SDK
+  // API.
+  //
+  // Errors:
+  // - `INVALID_ARGUMENT` if the resulting Record violates the consistency
+  //   rules documented on `sasha.common.public.Record`, the supplied Record
+  //   sets `c2pa_manifest_store`, or `update_mask` names an unknown or
+  //   immutable path. A field the update writes and that is wrong on its own
+  //   terms is named in the error details, with the path it carries in
+  //   `update_mask` (see "Validation failures" on the service). A rule that
+  //   can only be decided against the merged Record — a distribution field
+  //   whose `share_state` the update does not also supply, say — is left to
+  //   the stored Record and reported with the status message alone.
+  // - `NOT_FOUND` if the signature does not exist or was not registered by
+  //   the calling partner.
+  // - `FAILED_PRECONDITION` if the signature is revoked.
+  //
+  // **Authentication required:**
+  // Bearer token issued by `PartnerAPI.AuthenticateWithClientCredential`,
+  // passed in the "Authorization" metadata with the format `Bearer <token>`.
+  // Requires the same partner permission as submitting embed jobs.
+  rpc UpdateSignatureRecord(UpdateSignatureRecordRequest)
+      returns (UpdateSignatureRecordResponse) {
+    option idempotency_level = IDEMPOTENT;
+  }
 
   // ----------------------------------------------------------------------------
   // Job Management
@@ -152,10 +275,21 @@ message EmbedSignatureFromURLRequest {
   //
   // If not provided, the MIME type will be inferred from the URL.
   //
-  // The following MIME types are supported:
+  // The following MIME types are currently supported:
   // - `image/jpeg`
   // - `image/png`
+  // - `image/webp`
+  //
+  // For the most up-to-date list of supported formats and other media
+  // constraints, see the Supported Formats reference:
+  // https://developer.sasha.eu/partner-api/api-reference/supported-formats
   google.protobuf.StringValue media_mime_type = 3;
+
+  // Optional. A Record to attach to the resulting signature. Validated at
+  // submit; an invalid Record fails the request with `INVALID_ARGUMENT` and
+  // creates no job. Every rejected field is named in the error details of that
+  // status (see "Validation failures" on the service).
+  sasha.common.public.Record record = 4;
 }
 
 message EmbedSignatureFromURLResponse {
@@ -180,10 +314,27 @@ message EmbedSignatureFromDataRequest {
   //
   // See also `media_data_chunk` field.
   //
-  // The following MIME types are supported:
+  // The value from the first message that supplies one is used. Later messages
+  // must either omit it or repeat the same value; a mismatch fails the request
+  // with `INVALID_ARGUMENT`.
+  //
+  // The following MIME types are currently supported:
   // - `image/jpeg`
   // - `image/png`
+  // - `image/webp`
+  //
+  // For the most up-to-date list of supported formats and other media
+  // constraints, see the Supported Formats reference:
+  // https://developer.sasha.eu/partner-api/api-reference/supported-formats
   string media_mime_type = 2;
+
+  // Optional. A Record to attach to the resulting signature. Validated at
+  // submit; an invalid Record fails the request with `INVALID_ARGUMENT` and
+  // creates no job. Every rejected field is named in the error details of that
+  // status (see "Validation failures" on the service).
+  //
+  // The value from the first message that supplies one is used.
+  sasha.common.public.Record record = 3;
 }
 
 message EmbedSignatureFromDataResponse {
@@ -203,10 +354,22 @@ message LookupSignatureFromURLRequest {
   //
   // If not provided, the MIME type will be inferred from the URL.
   //
-  // The following MIME types are supported:
+  // The following MIME types are currently supported:
   // - `image/jpeg`
   // - `image/png`
+  // - `image/webp`
+  //
+  // For the most up-to-date list of supported formats and other media
+  // constraints, see the Supported Formats reference:
+  // https://developer.sasha.eu/partner-api/api-reference/supported-formats
   google.protobuf.StringValue media_mime_type = 3;
+
+  // Optional. The context in which the media was found, used to evaluate the
+  // found signature's Record into distribution guidance on the completed job.
+  //
+  // Strongly recommended: without URL context, restricted media yields an
+  // inconclusive verdict.
+  sasha.common.public.GuidanceContext guidance_context = 4;
 }
 
 message LookupSignatureFromURLResponse {
@@ -231,13 +394,87 @@ message LookupSignatureFromDataRequest {
   //
   // See also `media_data_chunk` field.
   //
-  // The supported mime types are `image/jpeg` and `image/png`.
+  // The value from the first message that supplies one is used. Later messages
+  // must either omit it or repeat the same value; a mismatch fails the request
+  // with `INVALID_ARGUMENT`.
+  //
+  // The currently supported mime types are `image/jpeg`, `image/png`, and
+  // `image/webp`.
+  //
+  // For the most up-to-date list of supported formats and other media
+  // constraints, see the Supported Formats reference:
+  // https://developer.sasha.eu/partner-api/api-reference/supported-formats
   string media_mime_type = 2;
+
+  // Optional. The context in which the media was found, used to evaluate the
+  // found signature's Record into distribution guidance on the completed job.
+  //
+  // The value from the first message that supplies one is used.
+  //
+  // Strongly recommended: without URL context, restricted media yields an
+  // inconclusive verdict.
+  sasha.common.public.GuidanceContext guidance_context = 3;
 }
 
 message LookupSignatureFromDataResponse {
   // Required. The job that was created.
   Job job = 1;
+}
+
+// ----------------------------------------------------------------------------
+// PartnerAPI.GetSignatureRecord / UpdateSignatureRecord
+// ----------------------------------------------------------------------------
+
+message GetSignatureRecordRequest {
+  // Required. The signature whose Record to return.
+  sasha.common.public.SignatureID signature_id = 1;
+}
+
+message GetSignatureRecordResponse {
+  // Optional. The Record attached to the signature. Unset when the signature
+  // has no Record attached.
+  sasha.common.public.Record record = 1;
+
+  // Required. The signature's current revision. Callers may use it for change
+  // detection and optimistic concurrency.
+  uint64 revision = 2;
+}
+
+message UpdateSignatureRecordRequest {
+  // Required. The signature whose Record to update.
+  sasha.common.public.SignatureID signature_id = 1;
+
+  // Optional. Carries the new values for the parts named in `update_mask`.
+  // Output-only Record fields are ignored.
+  sasha.common.public.Record record = 2;
+
+  // Required. The parts to replace. Supported paths: `record` (a path present
+  // with its value unset detaches the Record) and `record.<field>` for any
+  // top-level Record field except `c2pa_manifest_store` (replaces only that
+  // field; unset value clears it).
+  google.protobuf.FieldMask update_mask = 3;
+
+  // Optional. When true, the response includes the Record after the update.
+  // Defaults to false to keep the response small: a Record may be large.
+  bool return_record = 4;
+
+  // Optional. Optimistic-concurrency precondition. When set, the update is
+  // applied only if the signature's current revision equals this value;
+  // otherwise it is rejected with FAILED_PRECONDITION and the caller should
+  // re-read the Record (GetSignatureRecord) and retry. Omit for
+  // last-write-wins. Pair it with the `revision` returned by a prior read or
+  // write.
+  optional uint64 expected_revision = 5;
+}
+
+message UpdateSignatureRecordResponse {
+  // Optional. The Record after the update. Populated only when
+  // `return_record` was set on the request; also unset when the update
+  // detached the Record.
+  sasha.common.public.Record record = 1;
+
+  // Required. The signature's revision after the update.
+  uint64 revision = 2;
 }
 
 // ----------------------------------------------------------------------------

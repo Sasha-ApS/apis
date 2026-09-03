@@ -1,0 +1,28 @@
+// Copyright 2026 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.common.public;
+
+option java_package = "eu.sasha.common.pub";
+option java_multiple_files = true;
+option java_outer_classname = "FieldValueProto";
+
+// A typed value for a custom Record field (`Record.custom_fields`).
+//
+// The `oneof` pins the value's type at write time; the service validates the
+// value against size limits but does not interpret it. Custom fields are
+// display/metadata only and never participate in distribution guidance
+// evaluation.
+message FieldValue {
+  oneof kind {
+    bool   boolean_value = 1;
+    string string_value  = 2;
+    int32  int32_value   = 3;
+    double double_value  = 4;
+
+    // A UUID per RFC 9562, stored as its 16 raw bytes. The UUID version is
+    // partner-defined.
+    bytes  uuid_value    = 5;
+  }
+}
