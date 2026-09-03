@@ -1,0 +1,79 @@
+// Copyright 2026 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.common.public;
+
+option java_package = "eu.sasha.common.pub";
+option java_multiple_files = true;
+option java_outer_classname = "GuidanceProto";
+
+import "google/protobuf/wrappers.proto";
+
+import "sasha/common/public/share_state.proto";
+
+// SASHA-evaluated distribution guidance for a found signature.
+//
+// Guidance is a coarse, server-side evaluation of the found signature's
+// Record: the underlying rules (URL patterns, time windows) are evaluated
+// into closed-enum verdicts and are never carried in Guidance itself. The
+// optional human-readable `message` may name domains from the evaluated
+// rules (domain names are public knowledge and are not masked), but full
+// URL patterns and other raw Record content are never included. Raw Record
+// fields may separately be disclosed to an authorized looker via the lookup
+// response's `record` field; that path is independent of Guidance.
+//
+// Guidance reflects the distribution intent the creator declared to SASHA.
+// It is not a determination of the legal status of the media; rights such as
+// copyright apply independently of the returned advice.
+message Guidance {
+  // The verdict for the queried location and time.
+  enum Advice {
+    // Unused. Default unspecified value when the field is not set. Proto3
+    // requires first enum to be 0.
+    ADVICE_UNSPECIFIED = 0;
+
+    // Presence of the media at the queried location at the current time is
+    // consistent with the creator's declared distribution intent.
+    ADVICE_ALLOWED = 1;
+
+    // Presence of the media at the queried location at the current time
+    // conflicts with the creator's declared distribution intent, or the
+    // creator declared the media as not intended for public distribution.
+    ADVICE_NOT_ALLOWED = 2;
+
+    // No conclusive verdict could be produced. Typically returned when the
+    // share state is `SHARE_STATE_RESTRICTED` and no `publish_url` or
+    // `source_url` was supplied with the lookup.
+    ADVICE_INCONCLUSIVE = 3;
+  }
+
+  // Required. The creator-declared share state of the media.
+  //
+  // A signature without a Record yields `SHARE_STATE_PRIVATE`.
+  ShareState share_state = 1;
+
+  // Required. The verdict for the queried location and time.
+  //
+  // - `SHARE_STATE_PRIVATE` yields `ADVICE_NOT_ALLOWED` for any public
+  //   location.
+  // - `SHARE_STATE_UNRESTRICTED` yields `ADVICE_ALLOWED`.
+  // - `SHARE_STATE_RESTRICTED` is evaluated against the supplied
+  //   `GuidanceContext` and the current time; without URL context the
+  //   verdict may be `ADVICE_INCONCLUSIVE`. A restricted Record that
+  //   carries no distribution fields permits no locations and yields
+  //   `ADVICE_NOT_ALLOWED`.
+  Advice advice = 2;
+
+  // Optional. Human-readable explanation of the verdict, e.g.
+  // "Only allowed on example.com".
+  //
+  // Populated at the server's discretion, typically when `advice` is
+  // `ADVICE_NOT_ALLOWED` or `ADVICE_INCONCLUSIVE`. For developer convenience
+  // only: English, not localized, and the wording is not stable across
+  // releases — never parse or branch on it; use `advice` and `share_state`
+  // for program logic. The text may name domains from the Record's allowed
+  // URL patterns (domain names are public knowledge and are not masked); it
+  // never carries full URL patterns or other raw Record content.
+  google.protobuf.StringValue message = 3;
+}

@@ -1,0 +1,26 @@
+// Copyright 2026 Sasha ApS
+
+syntax = "proto3";
+
+package sasha.common.public;
+
+option java_package = "eu.sasha.common.pub";
+option java_multiple_files = true;
+option java_outer_classname = "GuidanceContextProto";
+
+import "google/protobuf/wrappers.proto";
+
+// The context in which a media item was found, used to evaluate the found
+// signature's Record into distribution guidance.
+//
+// All fields are optional, but supplying them is strongly recommended:
+// without URL context, restricted media yields an inconclusive verdict.
+message GuidanceContext {
+  // Optional. The browser-facing URL where the media is displayed or is
+  // about to be published.
+  google.protobuf.StringValue publish_url = 1;
+
+  // Optional. The URL the media bytes were fetched from (e.g. a CDN
+  // address).
+  google.protobuf.StringValue source_url = 2;
+}
